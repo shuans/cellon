@@ -1379,7 +1379,7 @@ def test_enable_database():
 
 
 def test_enable_database_default():
-    """enable_database() now requires a Postgres URL (no meaningless sqlite default)."""
+    """A database URL is required so the backend is explicit."""
     from cello import App
 
     app = App()

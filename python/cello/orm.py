@@ -1,12 +1,11 @@
 """
-Cello ORM — a small async ORM over the native Postgres pool.
+Cellon ORM — a small async ORM over the configured database backend.
 
-This is a *real, working* ORM built on ``app.database`` (deadpool-postgres). It
-deliberately covers the common 80%: typed models, a chainable async QuerySet,
-``create_table``, and ``ForeignKey``. It is intentionally lightweight — there
-are no migration diffing, no lazy reverse relations, no ``select_related`` join
-planner, and no signals/admin. What is here is tested end-to-end against real
-Postgres; where the line falls is documented in the class docstrings.
+The ORM works with the native PostgreSQL pool and the SQLite/DuckDB adapters
+exposed by ``app.database``. It deliberately covers the common 80%: typed
+models, a chainable async QuerySet, ``create_table``, and ``ForeignKey``. It is
+intentionally lightweight — there are no migration diffing, no lazy reverse
+relations, no ``select_related`` join planner, and no signals/admin.
 
 Quick start::
 
@@ -120,11 +119,20 @@ class Field:
     def column(self) -> str:
         return self.db_column or self.name
 
-    def ddl_type(self) -> str:
-        return self.sql_type(self) if callable(self.sql_type) else self.sql_type
+    def ddl_type(self, dialect: str = "postgres") -> str:
+        value = self.sql_type(self) if callable(self.sql_type) else self.sql_type
+        if dialect in {"sqlite", "duckdb"}:
+            value = {
+                "SERIAL": "INTEGER",
+                "BIGSERIAL": "BIGINT",
+                "JSONB": "JSON",
+                "TIMESTAMPTZ": "TIMESTAMP",
+                "DOUBLE PRECISION": "DOUBLE",
+            }.get(value, value)
+        return value
 
-    def column_ddl(self) -> str:
-        parts = [f'"{self.column}"', self.ddl_type()]
+    def column_ddl(self, dialect: str = "postgres") -> str:
+        parts = [f'"{self.column}"', self.ddl_type(dialect)]
         if self.primary_key:
             parts.append("PRIMARY KEY")
         if self.unique and not self.primary_key:
@@ -132,7 +140,11 @@ class Field:
         if not self.null and not self.primary_key:
             parts.append("NOT NULL")
         if self.default is not None and not callable(self.default):
-            parts.append(f"DEFAULT {_sql_literal(self.default)}")
+            if self.default is _NOW:
+                default_sql = "CURRENT_TIMESTAMP" if dialect in {"sqlite", "duckdb"} else "now()"
+            else:
+                default_sql = _sql_literal(self.default)
+            parts.append(f"DEFAULT {default_sql}")
         return " ".join(parts)
 
 
@@ -207,8 +219,8 @@ class ForeignKey(Field):
     def column(self) -> str:
         return self.db_column or f"{self.name}_id"
 
-    def column_ddl(self) -> str:
-        base = super().column_ddl()
+    def column_ddl(self, dialect: str = "postgres") -> str:
+        base = super().column_ddl(dialect)
         target = self.to._meta.table_name
         target_pk = self.to._meta.pk_column
         return f'{base} REFERENCES "{target}"("{target_pk}") ON DELETE {self.on_delete}'
@@ -315,17 +327,23 @@ class Model(metaclass=ModelMeta):
         ]
         if pk_val is None:
             cols, placeholders, params = [], [], []
-            for i, (name, f) in enumerate(
-                [(n, f) for n, f in meta.fields.items() if not isinstance(f, AutoField)],
-                start=1,
-            ):
+            for name, f in meta.fields.items():
+                if isinstance(f, AutoField):
+                    continue
+                value = _field_value(self, name, f)
+                if value is _NOW:
+                    # Omit server-generated timestamp defaults from INSERT.
+                    continue
                 cols.append(f'"{f.column}"')
-                placeholders.append(f"${i}")
-                params.append(_field_value(self, name, f))
-            sql = (
-                f'INSERT INTO "{meta.table_name}" ({", ".join(cols)}) '
-                f'VALUES ({", ".join(placeholders)}) RETURNING *'
-            )
+                placeholders.append(f"${len(params) + 1}")
+                params.append(value)
+            if cols:
+                sql = (
+                    f'INSERT INTO "{meta.table_name}" ({", ".join(cols)}) '
+                    f'VALUES ({", ".join(placeholders)}) RETURNING *'
+                )
+            else:
+                sql = f'INSERT INTO "{meta.table_name}" DEFAULT VALUES RETURNING *'
             row = await db.fetchrow(sql, *params)
             for name, f in meta.fields.items():
                 setattr(self, name, row.get(f.column))
@@ -358,9 +376,22 @@ class Model(metaclass=ModelMeta):
     @classmethod
     async def create_table(cls, using=None, if_not_exists: bool = True) -> None:
         db = _require_db(using)
-        cols = [f.column_ddl() for f in cls._meta.fields.values()]
+        dialect = getattr(db, "backend", "postgres")
+        cols = [f.column_ddl(dialect) for f in cls._meta.fields.values()]
         exists = "IF NOT EXISTS " if if_not_exists else ""
         sql = f'CREATE TABLE {exists}"{cls._meta.table_name}" ({", ".join(cols)})'
+        if dialect == "duckdb":
+            # DuckDB has no SERIAL; emulate AutoField with a sequence/default.
+            for field in cls._meta.fields.values():
+                if isinstance(field, AutoField):
+                    sql = sql.replace(
+                        f'"{field.column}" INTEGER PRIMARY KEY',
+                        f'"{field.column}" INTEGER PRIMARY KEY DEFAULT nextval(\'cello_{cls._meta.table_name}_{field.column}_seq\')',
+                    )
+                    await db.execute(
+                        f"CREATE SEQUENCE IF NOT EXISTS cello_{cls._meta.table_name}_{field.column}_seq"
+                    )
+                    break
         await db.execute(sql)
 
     @classmethod
@@ -385,7 +416,9 @@ def _field_value(obj, name, field):
         return val
     val = getattr(obj, name, None)
     if val is None and field.default is not None and not callable(field.default):
-        return None if field.default is _NOW else field.default
+        # The INSERT path omits this sentinel so the backend evaluates its
+        # dialect-specific CURRENT_TIMESTAMP default.
+        return field.default
     return val
 
 

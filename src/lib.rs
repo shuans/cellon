@@ -99,6 +99,14 @@ pub struct Cello {
     handler_timeout_secs: u64,
     /// Maximum number of blocking threads available for offloaded sync handlers.
     blocking_threads: usize,
+    /// Optional native TLS configuration.
+    tls_config: Option<PyTlsConfig>,
+    /// Optional HTTP/2 configuration.
+    http2_config: Option<server::Http2Config>,
+    /// Optional HTTP/3 configuration (recorded until the QUIC server is enabled).
+    http3_config: Option<PyHttp3Config>,
+    /// Optional multi-process cluster configuration.
+    cluster_config: Option<server::ClusterConfig>,
     /// Native Postgres pool built by `enable_database()`, exposed as `app.database`
     /// and injected into each request as `request.database`.
     database_client: Option<Py<db::PyDatabase>>,
@@ -135,6 +143,10 @@ impl Cello {
             // 64 concurrent blocking handlers is enough to absorb typical blocking
             // I/O without the memory and GIL contention of a very large pool.
             blocking_threads: 64,
+            tls_config: None,
+            http2_config: None,
+            http3_config: None,
+            cluster_config: None,
             database_client: None,
             redis_client: None,
         }
@@ -332,6 +344,79 @@ impl Cello {
         self.middleware.add(compression);
     }
 
+    /// Enable native TLS for the HTTP server.
+    pub fn enable_tls(&mut self, config: PyTlsConfig) -> PyResult<()> {
+        if !std::path::Path::new(&config.cert_path).is_file() {
+            return Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                "TLS certificate not found: {}",
+                config.cert_path
+            )));
+        }
+        if !std::path::Path::new(&config.key_path).is_file() {
+            return Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                "TLS private key not found: {}",
+                config.key_path
+            )));
+        }
+        self.tls_config = Some(config);
+        Ok(())
+    }
+
+    /// Enable HTTP/2 for the HTTP server.
+    pub fn enable_http2(&mut self, config: Option<PyHttp2Config>) {
+        let config = config.unwrap_or_else(|| PyHttp2Config::new(100, 1024 * 1024, 16384, false));
+        let mut native = server::Http2Config::new()
+            .max_concurrent_streams(config.max_concurrent_streams)
+            .window_size(config.initial_window_size)
+            .max_frame_size(config.max_frame_size);
+        if config.enable_push {
+            native = native.enable_push();
+        }
+        self.http2_config = Some(native);
+    }
+
+    /// Record HTTP/3 configuration. QUIC serving is not yet part of App.run().
+    pub fn enable_http3(&mut self, config: Option<PyHttp3Config>) {
+        self.http3_config = Some(config.unwrap_or_else(|| PyHttp3Config::new(30, 1350, 100, false)));
+    }
+
+    /// Configure the server's cluster settings.
+    ///
+    /// The Python wrapper starts the worker processes, while these settings are
+    /// passed to the native server for connection-level cluster configuration.
+    pub fn enable_cluster(&mut self, config: PyClusterConfig) {
+        let mut cluster = server::ClusterConfig::new(config.workers);
+        cluster.cpu_affinity = config.cpu_affinity;
+        cluster.max_restarts = config.max_restarts;
+        cluster.graceful_shutdown = config.graceful_shutdown;
+        cluster.shutdown_timeout = std::time::Duration::from_secs(config.shutdown_timeout);
+        self.cluster_config = Some(cluster);
+    }
+
+    /// Enable static file serving.
+    pub fn enable_static_files(&mut self, config: PyStaticFilesConfig) -> PyResult<()> {
+        let mut static_config = middleware::static_files::StaticFilesConfig::new(
+            &config.prefix,
+            &config.root,
+        )
+        .etag(config.enable_etag)
+        .last_modified(config.enable_last_modified)
+        .dir_listing(config.directory_listing);
+
+        if let Some(index) = config.index_file.as_deref() {
+            static_config = static_config.index(index);
+        } else {
+            static_config = static_config.no_index();
+        }
+        if let Some(cache_control) = config.cache_control.as_deref() {
+            static_config = static_config.cache_str(cache_control);
+        }
+
+        self.middleware
+            .add(middleware::StaticFilesMiddleware::with_config(static_config));
+        Ok(())
+    }
+
     /// Enable caching middleware.
     ///
     /// `compress` (default `True`) gzips a cache HIT inline for clients that send
@@ -429,8 +514,14 @@ impl Cello {
     pub fn enable_session(&mut self, config: Option<PySessionConfig>) {
         let mut mw = middleware::session::SessionMiddleware::new();
         if let Some(cfg) = config {
-            mw = mw.cookie_name(&cfg.cookie_name);
-            mw = mw.ttl(std::time::Duration::from_secs(cfg.max_age));
+            mw = mw
+                .cookie_name(&cfg.cookie_name)
+                .cookie_path(&cfg.cookie_path)
+                .cookie_domain(cfg.cookie_domain.as_deref())
+                .cookie_secure(cfg.cookie_secure)
+                .cookie_http_only(cfg.cookie_http_only)
+                .cookie_same_site(&cfg.cookie_same_site)
+                .ttl(std::time::Duration::from_secs(cfg.max_age));
         }
         self.middleware.add(mw);
     }
@@ -960,6 +1051,9 @@ def openapi_handler(request):
         let read_body_timeout_secs = self.read_body_timeout_secs;
         let read_header_timeout_secs = self.read_header_timeout_secs;
         let handler_timeout_secs = self.handler_timeout_secs;
+        let tls_config = self.tls_config.clone();
+        let http2_config = self.http2_config.clone();
+        let cluster_config = self.cluster_config.clone();
 
         // Start the persistent asyncio loop now, while single-threaded and holding the
         // GIL, so the first async request neither pays init cost nor races on it.
@@ -995,6 +1089,15 @@ def openapi_handler(request):
                     config.read_body_timeout = secs_to_opt(read_body_timeout_secs);
                     config.read_header_timeout = secs_to_opt(read_header_timeout_secs);
                     config.handler_timeout = secs_to_opt(handler_timeout_secs);
+                    if let Some(tls) = tls_config {
+                        config = config.tls(server::TlsConfig::new(tls.cert_path, tls.key_path));
+                    }
+                    if let Some(http2) = http2_config {
+                        config = config.http2(http2);
+                    }
+                    if let Some(cluster) = cluster_config {
+                        config = config.cluster(cluster);
+                    }
 
                     let server = Server::new(
                         config,

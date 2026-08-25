@@ -27,7 +27,7 @@ tags:
 
 ```mermaid
 flowchart LR
-    A(["pip install\ncello-framework"]) --> B["Create App()"]
+    A(["pip install\ncellon"]) --> B["Create App()"]
     B --> C["Register Routes\n@app.get / post / put"]
     C --> D["app.run()"]
     D --> E(["API live\nlocalhost:8000"])
@@ -74,7 +74,7 @@ if __name__ == "__main__":
 ```bash title="Terminal output"
 $ python app.py
   ___ ___| | | ___
- / __/ _ \ | |/ _ \   Cello v1.3.0
+ / __/ _ \ | |/ _ \   Cellon v1.4.0
 | (_|  __/ | | (_) |  Rust-powered Python Web Framework
  \___\___|_|_|\___/
 
@@ -114,7 +114,7 @@ Cello running at http://127.0.0.1:8000
     === "pip (Recommended)"
 
         ```bash
-        pip install cello-framework
+        pip install cellon
         ```
 
     === "From Source"

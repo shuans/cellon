@@ -425,6 +425,36 @@ impl SessionMiddleware {
         self
     }
 
+    /// Set cookie path.
+    pub fn cookie_path(mut self, path: &str) -> Self {
+        self.cookie_config.path = path.to_string();
+        self
+    }
+
+    /// Set cookie domain.
+    pub fn cookie_domain(mut self, domain: Option<&str>) -> Self {
+        self.cookie_config.domain = domain.map(str::to_string);
+        self
+    }
+
+    /// Set the Secure cookie flag.
+    pub fn cookie_secure(mut self, enabled: bool) -> Self {
+        self.cookie_config.secure = enabled;
+        self
+    }
+
+    /// Set the HttpOnly cookie flag.
+    pub fn cookie_http_only(mut self, enabled: bool) -> Self {
+        self.cookie_config.http_only = enabled;
+        self
+    }
+
+    /// Set the SameSite cookie attribute.
+    pub fn cookie_same_site(mut self, same_site: &str) -> Self {
+        self.cookie_config.same_site = same_site.to_string();
+        self
+    }
+
     /// Set session TTL.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.session_ttl = ttl;

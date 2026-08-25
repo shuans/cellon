@@ -28,7 +28,7 @@ This guide covers all installation methods for Cello Framework.
 The easiest way to install Cello is via pip:
 
 ```bash
-pip install cello-framework
+pip install cellon
 ```
 
 !!! tip "Virtual Environment"
@@ -39,7 +39,7 @@ pip install cello-framework
     source .venv/bin/activate  # Linux/macOS
     # or
     .venv\Scripts\activate     # Windows
-    pip install cello-framework
+    pip install cellon
     ```
 
 ### From Source
@@ -74,6 +74,7 @@ Install directly from GitHub:
 
 ```bash
 pip install git+https://github.com/jagadeesh32/cello.git
+# The import-compatible package name remains: from cello import App
 ```
 
 ## Verify Installation
@@ -134,7 +135,7 @@ For additional features, install optional dependencies:
 No additional requirements. Works out of the box.
 
 ```bash
-pip install cello-framework
+pip install cellon
 ```
 
 ### macOS
@@ -142,7 +143,7 @@ pip install cello-framework
 No additional requirements. Works on both Intel and Apple Silicon.
 
 ```bash
-pip install cello-framework
+pip install cellon
 ```
 
 ### Windows
@@ -153,7 +154,7 @@ Works on Windows 10/11. Ensure you have:
 - Visual C++ Build Tools (for source builds only)
 
 ```powershell
-pip install cello-framework
+pip install cellon
 ```
 
 ## Docker
@@ -164,8 +165,8 @@ Run Cello in a Docker container:
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml README.md ./
+RUN pip install --no-cache-dir cellon
 
 COPY . .
 EXPOSE 8000
@@ -195,8 +196,8 @@ If you get an import error:
 which python
 
 # Reinstall
-pip uninstall cello-framework
-pip install cello-framework
+pip uninstall cellon
+pip install cellon
 ```
 
 ### Build Errors (from source)
@@ -217,7 +218,7 @@ cargo --version
 Use `--user` flag or a virtual environment:
 
 ```bash
-pip install --user cello-framework
+pip install --user cellon
 ```
 
 ## Next Steps

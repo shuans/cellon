@@ -169,7 +169,7 @@ app.enable_compression(512)      # Custom min_size
 
 # Rate Limiting
 from cello import RateLimitConfig
-app.enable_rate_limit(RateLimitConfig.token_bucket(100, 60))
+app.enable_rate_limit(RateLimitConfig.token_bucket(100, 10))
 
 # Caching
 app.enable_caching(ttl=300)
@@ -182,15 +182,14 @@ app.enable_circuit_breaker(failure_threshold=5, reset_timeout=30)
 
 ```python
 from cello import JwtConfig, SessionConfig, SecurityHeadersConfig
+from cello.middleware import JwtAuth
 
 # JWT Authentication
-jwt = JwtConfig(secret=b"your-secret-key-min-32-bytes-long")
+jwt = JwtConfig(secret="your-secret-key-min-32-bytes-long")
 app.use(JwtAuth(jwt))
 
 # Sessions
-app.enable_sessions(SessionConfig(
-    secret=b"session-secret-minimum-32-bytes-long"
-))
+app.enable_session(SessionConfig(cookie_secure=False))
 
 # CSRF Protection
 app.enable_csrf()
@@ -277,11 +276,13 @@ For multi-process deployment:
 from cello import ClusterConfig
 
 cluster = ClusterConfig(
-    workers=4,              # Number of worker processes
-    graceful_timeout=30,    # Seconds to wait for in-flight requests
+    workers=4,
+    graceful_shutdown=True,
+    shutdown_timeout=30,
 )
 
-app.enable_cluster(cluster)
+# App.run(workers=4) starts the configured worker processes.
+app.run(workers=cluster.workers)
 ```
 
 ---
@@ -294,12 +295,12 @@ Configure request and response timeouts:
 from cello import TimeoutConfig
 
 timeout = TimeoutConfig(
-    request_timeout=30,     # Max seconds for full request
-    response_timeout=60,    # Max seconds for response generation
-    keep_alive=75,          # Keep-alive timeout in seconds
+    read_header=5,
+    read_body=30,
+    handler=30,
 )
 
-app.enable_timeouts(timeout)
+app.set_timeouts(timeout)
 ```
 
 ---
@@ -316,7 +317,7 @@ limits = LimitsConfig(
     max_header_size=8192,               # 8 KB
 )
 
-app.enable_limits(limits)
+app.set_limits(limits)
 ```
 
 Or use the simpler body limit:
@@ -334,12 +335,10 @@ app.enable_body_limit(10 * 1024 * 1024)  # 10 MB
 ```python
 from cello import Http2Config
 
-h2 = Http2Config(
-    enabled=True,
-    max_concurrent_streams=100,
-)
-
+h2 = Http2Config(max_concurrent_streams=100)
 app.enable_http2(h2)
+# HTTP/2 is negotiated over TLS with ALPN. Plain TCP remains HTTP/1.1.
+
 ```
 
 ### HTTP/3 (QUIC)
@@ -347,12 +346,10 @@ app.enable_http2(h2)
 ```python
 from cello import Http3Config
 
-h3 = Http3Config(
-    enabled=True,
-    port=443,
-)
+h3 = Http3Config(max_idle_timeout=30)
+# App.run() does not currently start a QUIC listener; use a dedicated HTTP/3
+# edge server and proxy to Cello until native QUIC serving is added.
 
-app.enable_http3(h3)
 ```
 
 ---
@@ -380,7 +377,7 @@ def on_shutdown():
 ```python
 from cello import StaticFilesConfig
 
-app.enable_static_files(StaticFilesConfig("/static", "./public"))
+app.enable_static_files(StaticFilesConfig(root="./public", prefix="/static"))
 ```
 
 See [Static Files](../features/advanced/static-files.md) for full configuration options.
@@ -413,7 +410,7 @@ app.enable_health_checks()
 app.enable_openapi(title="My Production API", version="2.0.0")
 
 # Static files
-app.enable_static_files(StaticFilesConfig("/static", "./public"))
+app.enable_static_files(StaticFilesConfig(root="./public", prefix="/static"))
 
 # Routes
 @app.get("/")

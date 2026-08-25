@@ -27,6 +27,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
+type TlsAcceptor = tokio_rustls::TlsAcceptor;
 use tokio::sync::broadcast;
 
 use crate::error::{AppError, ErrorHandlerRegistry};
@@ -40,6 +41,39 @@ use crate::websocket::WebSocketRegistry;
 pub use cluster::{ClusterConfig, ClusterManager};
 pub use protocols::{Http2Config, Http3Config, TlsConfig};
 
+fn build_tls_acceptor(config: &TlsConfig) -> Result<TlsAcceptor, String> {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use std::fs::File;
+    use std::io::BufReader;
+
+    let mut cert_reader = BufReader::new(
+        File::open(&config.cert_path).map_err(|e| format!("failed to open TLS certificate: {e}"))?,
+    );
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to parse TLS certificate: {e}"))?;
+    if certs.is_empty() {
+        return Err("TLS certificate file contains no certificates".to_string());
+    }
+
+    let mut key_reader = BufReader::new(
+        File::open(&config.key_path).map_err(|e| format!("failed to open TLS private key: {e}"))?,
+    );
+    let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
+        .map_err(|e| format!("failed to parse TLS private key: {e}"))?
+        .ok_or_else(|| "TLS private key file contains no private key".to_string())?;
+
+    let mut server_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| format!("invalid TLS certificate/key pair: {e}"))?;
+    server_config.alpn_protocols = config
+        .alpn_protocols
+        .iter()
+        .map(|protocol| protocol.as_bytes().to_vec())
+        .collect();
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
+}
 // ============================================================================
 // Server Configuration
 // ============================================================================
@@ -526,6 +560,15 @@ impl Server {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create listener: {e}"))
         })?;
 
+        let tls_acceptor = self
+            .config
+            .tls
+            .as_ref()
+            .map(build_tls_acceptor)
+            .transpose()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            .map(Arc::new);
+
         // Banner and server details are printed by Python
 
         let router = Arc::new(self.router);
@@ -545,6 +588,7 @@ impl Server {
         let read_body_timeout = self.config.read_body_timeout;
         let read_header_timeout = self.config.read_header_timeout;
         let handler_timeout = self.config.handler_timeout;
+        let http2_config = self.config.http2.clone();
 
         let mut shutdown_rx = shutdown.subscribe();
 
@@ -602,13 +646,14 @@ impl Server {
 
                             metrics.inc_connections();
 
-                            let io = TokioIo::new(stream);
                             let router = router.clone();
                             let handlers = handlers.clone();
                             let middleware = middleware.clone();
                             let metrics_for_service = metrics.clone();
                             let metrics_for_cleanup = metrics.clone();
                             let shutdown = shutdown.clone();
+                            let tls_acceptor = tls_acceptor.clone();
+                            let http2_config = http2_config.clone();
 
                             let dependency_container = dependency_container.clone();
                             let guards = guards.clone();
@@ -627,6 +672,8 @@ impl Server {
                                 let conn_guards = guards;
                                 let conn_prometheus = prometheus;
                                 let conn_error_handlers = error_handlers;
+                                let conn_tls_acceptor = tls_acceptor;
+                                let conn_http2_config = http2_config;
                                 // Copy limit/timeout config (all Copy) into the connection scope.
                                 let conn_max_body_size = max_body_size;
                                 let conn_read_body_timeout = read_body_timeout;
@@ -673,19 +720,57 @@ impl Server {
                                     }
                                 });
 
-                                // PERF: Enable keep-alive and pipelining for better throughput.
-                                // header_read_timeout guards against Slowloris (slow header send).
-                                let mut builder = http1::Builder::new();
-                                builder.keep_alive(true).pipeline_flush(true);
-                                if let Some(t) = read_header_timeout {
-                                    // hyper 1.x requires an explicit timer for
-                                    // header_read_timeout; without it the
-                                    // connection task panics on first use.
-                                    builder.timer(hyper_util::rt::TokioTimer::new());
-                                    builder.header_read_timeout(t);
-                                }
-                                let serve_res: Result<(), hyper::Error> =
-                                    builder.serve_connection(io, service).await;
+                                // TLS connections negotiated with ALPN `h2` use
+                                // Hyper's HTTP/2 builder. Plain TCP remains HTTP/1.1.
+                                let serve_res: Result<(), hyper::Error> = if let Some(acceptor) = conn_tls_acceptor {
+                                    match acceptor.accept(stream).await {
+                                        Ok(tls_stream) => {
+                                            let is_h2 = tls_stream
+                                                .get_ref()
+                                                .1
+                                                .alpn_protocol()
+                                                .map(|protocol| protocol == b"h2")
+                                                .unwrap_or(false);
+                                            if is_h2 {
+                                                let mut builder = hyper::server::conn::http2::Builder::new(
+                                                    hyper_util::rt::TokioExecutor::new(),
+                                                );
+                                                if let Some(h2) = &conn_http2_config {
+                                                    builder.max_concurrent_streams(Some(h2.max_concurrent_streams));
+                                                    builder.initial_connection_window_size(Some(h2.initial_connection_window_size));
+                                                    builder.initial_stream_window_size(Some(h2.initial_stream_window_size));
+                                                    builder.max_frame_size(Some(h2.max_frame_size));
+                                                    builder.max_header_list_size(Some(h2.max_header_list_size));
+                                                }
+                                                builder.serve_connection(TokioIo::new(tls_stream), service).await
+                                            } else {
+                                                let mut builder = http1::Builder::new();
+                                                builder.keep_alive(true).pipeline_flush(true);
+                                                if let Some(t) = read_header_timeout {
+                                                    builder.timer(hyper_util::rt::TokioTimer::new());
+                                                    builder.header_read_timeout(t);
+                                                }
+                                                builder
+                                                    .serve_connection(TokioIo::new(tls_stream), service)
+                                                    .await
+                                            }
+                                        }
+                                        Err(err) => {
+                                            eprintln!("TLS handshake error: {err:?}");
+                                            Ok(())
+                                        }
+                                    }
+                                } else {
+                                    let mut builder = http1::Builder::new();
+                                    builder.keep_alive(true).pipeline_flush(true);
+                                    if let Some(t) = read_header_timeout {
+                                        builder.timer(hyper_util::rt::TokioTimer::new());
+                                        builder.header_read_timeout(t);
+                                    }
+                                    builder
+                                        .serve_connection(TokioIo::new(stream), service)
+                                        .await
+                                };
 
                                 if let Err(err) = serve_res {
                                     // Only log if not a normal connection close

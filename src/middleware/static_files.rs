@@ -159,6 +159,8 @@ pub struct StaticFilesConfig {
     pub cache_by_ext: HashMap<String, CacheControl>,
     /// Enable ETag generation
     pub etag: bool,
+    /// Enable Last-Modified handling
+    pub last_modified: bool,
     /// Enable directory listing
     pub dir_listing: bool,
     /// Index file name
@@ -180,6 +182,7 @@ impl StaticFilesConfig {
             cache_control: CacheControl::default(),
             cache_by_ext: HashMap::new(),
             etag: true,
+            last_modified: true,
             dir_listing: false,
             index_file: Some("index.html".to_string()),
             precompressed: true,
@@ -209,6 +212,12 @@ impl StaticFilesConfig {
     /// Enable/disable ETag.
     pub fn etag(mut self, enabled: bool) -> Self {
         self.etag = enabled;
+        self
+    }
+
+    /// Enable/disable Last-Modified handling.
+    pub fn last_modified(mut self, enabled: bool) -> Self {
+        self.last_modified = enabled;
         self
     }
 
@@ -271,7 +280,9 @@ impl StaticFilesMiddleware {
     /// Resolve file path from request path.
     fn resolve_path(&self, request_path: &str) -> Option<PathBuf> {
         // Check if request matches URL path prefix
-        if !request_path.starts_with(&self.config.url_path) {
+        if request_path != self.config.url_path
+            && !request_path.starts_with(&format!("{}/", self.config.url_path))
+        {
             return None;
         }
 
@@ -290,10 +301,20 @@ impl StaticFilesMiddleware {
         let decoded = urlencoding::decode(relative).ok()?;
         let decoded = decoded.as_ref();
 
-        // Check for hidden patterns (on decoded path)
-        for pattern in &self.config.hidden_patterns {
-            if decoded.contains(pattern.as_str()) || decoded.starts_with(pattern.as_str()) {
-                return None;
+        // Check hidden path components. A pattern of "." means a component
+        // beginning with a dot, not every filename containing an extension.
+        for component in decoded.split('/') {
+            for pattern in &self.config.hidden_patterns {
+                let hidden = if pattern == "." {
+                    component.starts_with('.')
+                } else if pattern == ".." {
+                    component == ".."
+                } else {
+                    component == pattern || component.starts_with(pattern)
+                };
+                if hidden {
+                    return None;
+                }
             }
         }
 
@@ -452,12 +473,14 @@ impl StaticFilesMiddleware {
         }
 
         // Check If-Modified-Since
-        if let Some(if_modified_since) = request.headers.get("if-modified-since") {
+        if self.config.last_modified {
+            if let Some(if_modified_since) = request.headers.get("if-modified-since") {
             if let Ok(modified) = metadata.modified() {
                 // Simple comparison - could be more sophisticated
                 let modified_str = format_http_date(modified);
-                if &modified_str == if_modified_since {
-                    return Some(Response::new(304));
+                    if &modified_str == if_modified_since {
+                        return Some(Response::new(304));
+                    }
                 }
             }
         }
@@ -486,8 +509,10 @@ impl StaticFilesMiddleware {
         }
 
         // Add Last-Modified
-        if let Ok(modified) = metadata.modified() {
-            response.set_header("Last-Modified", &format_http_date(modified));
+        if self.config.last_modified {
+            if let Ok(modified) = metadata.modified() {
+                response.set_header("Last-Modified", &format_http_date(modified));
+            }
         }
 
         // Add Content-Encoding if precompressed
@@ -551,7 +576,9 @@ impl Middleware for StaticFilesMiddleware {
         }
 
         // Check if path matches
-        if !request.path.starts_with(&self.config.url_path) {
+        if request.path != self.config.url_path
+            && !request.path.starts_with(&format!("{}/", self.config.url_path))
+        {
             return Ok(MiddlewareAction::Continue);
         }
 
@@ -567,6 +594,12 @@ impl Middleware for StaticFilesMiddleware {
 
     fn priority(&self) -> i32 {
         -80 // Run early but after logging
+    }
+
+    fn serves_unrouted(&self, method: &str, path: &str) -> bool {
+        (method == "GET" || method == "HEAD")
+            && (path == self.config.url_path
+                || path.starts_with(&format!("{}/", self.config.url_path)))
     }
 
     fn name(&self) -> &str {

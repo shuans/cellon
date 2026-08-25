@@ -189,8 +189,9 @@ app.enable_logging()
 # Compression
 app.enable_compression()
 
-# Rate limiting (100 requests per minute)
-app.enable_rate_limit(requests=100, window=60)
+# Rate limiting
+from cello import RateLimitConfig
+app.enable_rate_limit(RateLimitConfig.sliding_window(100, 60))
 ```
 
 ## Blueprints

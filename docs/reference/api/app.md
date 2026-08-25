@@ -405,7 +405,7 @@ Enable database connection pooling.
 
 > *Since v0.8.0*
 
-Configures an async connection pool for PostgreSQL, MySQL, or SQLite. Supports connection health monitoring, automatic reconnection, and query statistics.
+Configures a database backend. PostgreSQL uses the native Rust pool; SQLite and DuckDB use the async file-database adapter. All expose fetch/fetchrow/fetchval/execute and transactions.
 
 ```python
 from cello import App, DatabaseConfig
@@ -420,9 +420,9 @@ app.enable_database(DatabaseConfig(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `config` | `DatabaseConfig` | `DatabaseConfig("sqlite://cello.db")` | Database configuration instance |
+| `config` | `DatabaseConfig` | required | Database configuration instance. Use `postgresql://`, `sqlite://`, or `duckdb://`.
 
-When `config` is `None`, a default SQLite database at `sqlite://cello.db` is used.
+`config` is required. SQLite and DuckDB drivers are selected from the URL scheme; DuckDB requires the optional `duckdb` package.
 
 ### `app.enable_redis(config)`
 

@@ -77,7 +77,7 @@ def _mark_blocking(handler, blocking):
         except AttributeError:
             pass  # callable object with no writable __dict__; stays adaptive
     return handler
-from .database import transactional
+from .database import AsyncFileDatabase, transactional
 from .guards import (
     Guard,
     Role as RoleGuard,
@@ -311,6 +311,7 @@ __all__ = [
     "Redis",
     "Transaction",
     "transactional",
+    "AsyncFileDatabase",
     # v0.9.0 - API Protocol features
     "GrpcConfig",
     "KafkaConfig",
@@ -489,7 +490,8 @@ class App:
         self._routes = []  # Track routes for OpenAPI generation
         self._template_engine: "MiniJinjaEngine | None" = None  # v1.1.0
         self._redis = None  # Native Redis client; set by enable_redis()
-        self._database = None  # Native Postgres pool; set by enable_database()
+        self._database = None  # Native database backend; set by enable_database()
+        self._cluster_workers = None
         self.state = _AppState()  # Scratch namespace for user-held resources
 
     def exception_handler(self, exception_type):
@@ -690,6 +692,34 @@ class App:
         """
         self._app.enable_compression(min_size)
 
+    def enable_static_files(self, config: "StaticFilesConfig"):
+        """Serve files from a configured directory under a URL prefix."""
+        self._app.enable_static_files(config)
+        return self
+
+    def enable_tls(self, config: "TlsConfig"):
+        """Enable HTTPS using a PEM certificate and private key."""
+        self._app.enable_tls(config)
+        return self
+
+    def enable_http2(self, config: "Http2Config" = None):
+        """Enable HTTP/2 for TLS connections using ALPN negotiation."""
+        self._app.enable_http2(config)
+        return self
+
+    def enable_http3(self, config: "Http3Config" = None):
+        """Record HTTP/3 settings; QUIC serving is not available in App.run()."""
+        self._app.enable_http3(config)
+        return self
+
+    def enable_cluster(self, config: "ClusterConfig" = None):
+        """Configure native cluster settings and worker defaults."""
+        if config is None:
+            config = ClusterConfig.auto()
+        self._app.enable_cluster(config)
+        self._cluster_workers = config.workers
+        return self
+
     def enable_prometheus(self, endpoint: str = "/metrics", namespace: str = "cello", subsystem: str = "http"):
         """
         Enable Prometheus metrics middleware.
@@ -701,13 +731,13 @@ class App:
         """
         self._app.enable_prometheus(endpoint, namespace, subsystem)
 
-    def enable_rate_limit(self, config: RateLimitConfig):
-        """
-        Enable rate limiting middleware.
-
-        Args:
-            config: RateLimitConfig instance. Use RateLimitConfig.token_bucket(), .sliding_window() or .adaptive() to create.
-        """
+    def enable_rate_limit(self, config: RateLimitConfig = None, *, requests: int = None, window: int = None):
+        """Enable rate limiting using a config or the legacy requests/window form."""
+        if config is None:
+            if requests is None:
+                config = RateLimitConfig.token_bucket(100, 10)
+            else:
+                config = RateLimitConfig.sliding_window(requests, window or 60)
         self._app.enable_rate_limit(config)
 
     def enable_caching(self, ttl: int = 300, methods: list = None, exclude_paths: list = None, compress: bool = True):
@@ -737,6 +767,14 @@ class App:
         """
         self._app.enable_circuit_breaker(failure_threshold, reset_timeout, half_open_target, failure_codes)
 
+    def enable_limits(self, config: "LimitsConfig"):
+        """Compatibility alias for :meth:`set_limits`."""
+        return self.set_limits(config)
+
+    def enable_body_limit(self, max_body_size: int):
+        """Set only the maximum request body size, in bytes."""
+        return self.set_limits(LimitsConfig(max_body_size=max_body_size))
+
     def set_limits(self, config: "LimitsConfig"):
         """Configure request size limits.
 
@@ -750,6 +788,10 @@ class App:
         """
         self._app.set_limits(config)
         return self
+
+    def enable_timeouts(self, config: "TimeoutConfig"):
+        """Compatibility alias for :meth:`set_timeouts`."""
+        return self.set_timeouts(config)
 
     def set_timeouts(self, config: "TimeoutConfig"):
         """Configure server timeouts (all values in seconds; 0 disables a timeout).
@@ -797,20 +839,17 @@ class App:
         self._app.enable_jwt(config, skip_paths)
 
     def enable_session(self, config: "SessionConfig" = None):
-        """Enable session middleware (in-memory store).
-
-        Args:
-            config: SessionConfig instance (optional).
-        """
+        """Enable session middleware (in-memory store)."""
         self._app.enable_session(config)
 
-    def enable_security_headers(self, strict: bool = False):
-        """Enable security headers middleware (HSTS, X-Frame-Options, etc.).
+    def enable_sessions(self, config: "SessionConfig" = None):
+        """Compatibility alias for :meth:`enable_session`."""
+        return self.enable_session(config)
 
-        Args:
-            strict: Use stricter CSP and CORS settings (default: False).
-        """
-        self._app.enable_security_headers(strict)
+    def enable_security_headers(self, config=None):
+        """Enable security headers with defaults, a bool preset, or a config object."""
+        self._app.enable_security_headers(config)
+        return self
 
     def enable_csrf(self, cookie_name: str = None, header_name: str = None,
                     allowed_origins: list = None):
@@ -1046,7 +1085,7 @@ class App:
         """
         self._app.invalidate_cache(tags)
 
-    def enable_openapi(self, title: str = "Cello API", version: str = "1.3.0"):
+    def enable_openapi(self, title: str = "Cello API", version: str = "1.4.0"):
         """
         Enable OpenAPI documentation endpoints.
 
@@ -1057,7 +1096,7 @@ class App:
 
         Args:
             title: API title (default: "Cello API")
-            version: API version (default: "1.3.0")
+            version: API version (default: "1.4.0")
         """
         # Store for closure
         api_title = title
@@ -1210,11 +1249,11 @@ class App:
 
     def enable_database(self, config: "DatabaseConfig" = None):
         """
-        Enable database connection pooling.
+        Enable a database backend.
 
-        Configures an async connection pool for PostgreSQL, MySQL, or SQLite.
-        Supports connection health monitoring, automatic reconnection, and
-        query statistics.
+        PostgreSQL uses the native Rust pool. SQLite and DuckDB use the async
+        file-database adapter and expose the same fetch/fetchrow/fetchval/
+        execute/transaction interface.
 
         Args:
             config: DatabaseConfig instance
@@ -1228,14 +1267,27 @@ class App:
                 pool_size=20,
                 max_lifetime_secs=1800
             ))
+
+            # SQLite and DuckDB are also supported:
+            app.enable_database(DatabaseConfig(url="sqlite:///tmp/app.db"))
+            app.enable_database(DatabaseConfig(url="duckdb:///tmp/app.duckdb"))
         """
         if config is None:
             raise ValueError(
                 "enable_database() requires a DatabaseConfig with a Postgres URL, e.g. "
                 'DatabaseConfig(url="postgresql://user:pass@localhost:5432/mydb", pool_size=10)'
             )
+        url = config.url
+        url_scheme = url.lower()
+        if url_scheme.startswith(("sqlite://", "duckdb://")):
+            self._database = AsyncFileDatabase.from_url(url, config.pool_size)
+            return
+        if not url_scheme.startswith(("postgres://", "postgresql://")):
+            raise ValueError(
+                "DatabaseConfig.url must use postgresql://, postgres://, sqlite://, or duckdb://"
+            )
         self._app.enable_database(config)
-        # Expose the live native pool as app.database / request.database.
+        # Expose the live native PostgreSQL pool as app.database / request.database.
         self._database = self._app.database
 
     def enable_redis(self, config: "RedisConfig" = None):
@@ -1267,7 +1319,7 @@ class App:
 
     @property
     def database(self):
-        """The native Postgres pool (or None). Available after enable_database().
+        """The configured database backend (or None).
 
         Use inside ``on_event("startup")`` to create tables or warm caches::
 
@@ -1711,9 +1763,11 @@ class App:
         if logs:
             self.enable_logging()
 
-        # Determine worker count (default: all CPU cores)
+        # Determine worker count. An explicitly configured cluster takes
+        # precedence; otherwise use the existing development/production defaults.
+        if workers is None and self._cluster_workers is not None:
+            workers = self._cluster_workers
         if workers is None:
-            # Single worker in test/debug mode, multi-worker in production
             if "unittest" in sys.modules or "pytest" in sys.modules or debug:
                 workers = 1
             else:
