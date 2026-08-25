@@ -75,14 +75,13 @@ pub fn ensure_started(py: Python<'_>) {
 /// MUST be called from a blocking context (e.g. `tokio::task::spawn_blocking`): the
 /// wait inside `Future.result()` releases the GIL so the loop and other coroutines
 /// keep running concurrently.
-pub fn run_coroutine_blocking(py: Python<'_>, coro: &PyAny) -> Result<PyObject, String> {
-    let event_loop = get_loop(py).map_err(|e| e.to_string())?;
-    let asyncio = py.import("asyncio").map_err(|e| e.to_string())?;
-    let cfut = asyncio
-        .call_method1("run_coroutine_threadsafe", (coro, event_loop.as_ref(py)))
-        .map_err(|e| e.to_string())?;
+pub fn run_coroutine_blocking(py: Python<'_>, coro: &PyAny) -> PyResult<PyObject> {
+    let event_loop = get_loop(py)?;
+    let asyncio = py.import("asyncio")?;
+    let cfut = asyncio.call_method1(
+        "run_coroutine_threadsafe",
+        (coro, event_loop.as_ref(py)),
+    )?;
     // Blocks until the coroutine finishes; the internal wait releases the GIL.
-    cfut.call_method0("result")
-        .map(|r| r.into_py(py))
-        .map_err(|e| e.to_string())
+    Ok(cfut.call_method0("result")?.into_py(py))
 }

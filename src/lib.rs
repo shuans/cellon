@@ -65,6 +65,7 @@ use pyo3::prelude::*;
 use std::sync::Arc;
 
 use blueprint::Blueprint;
+use error::ErrorHandlerRegistry;
 use handler::HandlerRegistry;
 use router::Router;
 use server::Server;
@@ -83,6 +84,7 @@ pub struct Cello {
     dependency_container: Arc<dependency::DependencyContainer>,
     guards: Arc<middleware::guards::GuardsMiddleware>,
     prometheus: Arc<parking_lot::RwLock<Option<middleware::prometheus::PrometheusMiddleware>>>,
+    error_handlers: Arc<ErrorHandlerRegistry>,
     cache_store: Arc<parking_lot::RwLock<Option<Arc<dyn middleware::cache::CacheStore>>>>,
     startup_handlers: Vec<PyObject>,
     shutdown_handlers: Vec<PyObject>,
@@ -118,6 +120,7 @@ impl Cello {
             dependency_container: Arc::new(dependency::DependencyContainer::new()),
             guards: Arc::new(middleware::guards::GuardsMiddleware::new()),
             prometheus: Arc::new(parking_lot::RwLock::new(None)),
+            error_handlers: Arc::new(ErrorHandlerRegistry::new()),
             cache_store: Arc::new(parking_lot::RwLock::new(None)),
             startup_handlers: Vec::new(),
             shutdown_handlers: Vec::new(),
@@ -215,6 +218,11 @@ impl Cello {
         } else {
             u64::MAX
         });
+    }
+
+    /// Register a handler for a Python exception type.
+    pub fn register_exception_handler(&self, exception_type: String, handler: PyObject) {
+        self.error_handlers.set_exception_handler(exception_type, handler);
     }
 
     /// Enable CORS middleware.
@@ -942,6 +950,7 @@ def openapi_handler(request):
         let dependency_container = self.dependency_container.clone();
         let guards = self.guards.clone();
         let prometheus = self.prometheus.clone();
+        let error_handlers = self.error_handlers.clone();
         let startup_handlers = self.startup_handlers.clone();
         let shutdown_handlers = self.shutdown_handlers.clone();
 
@@ -996,6 +1005,7 @@ def openapi_handler(request):
                         dependency_container,
                         guards,
                         prometheus,
+                        error_handlers,
                     );
 
                     // Startup hooks
@@ -2421,7 +2431,9 @@ async fn run_lifecycle_handler_async(handler: PyObject) -> Result<(), String> {
         let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
         tokio::task::spawn_blocking(move || {
             let r = Python::with_gil(|py| {
-                async_loop::run_coroutine_blocking(py, result.as_ref(py)).map(|_| ())
+                async_loop::run_coroutine_blocking(py, result.as_ref(py))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
             });
             let _ = tx.send(r);
         });
@@ -2510,8 +2522,9 @@ fn _cello(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyCqrsConfig>()?;
     m.add_class::<PySagaConfig>()?;
 
-    // RFC 7807 error type
+    // RFC 7807 and exception handler APIs
     m.add_class::<error::ProblemDetails>()?;
+    m.add_class::<error::PyErrorHandlerRegistry>()?;
 
     Ok(())
 }

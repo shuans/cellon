@@ -1,161 +1,75 @@
-# Publishing Guide
+# Cellon Publishing Guide
 
-This guide explains how to publish Cello to GitHub and PyPI.
+Cellon is built and published by GitHub Actions. No local Rust, wheel, or source-distribution build is required.
 
 ## Prerequisites
 
-1. **GitHub Account** with a repository for cello
-2. **PyPI Account** at https://pypi.org
-3. **API Tokens** for PyPI authentication
+1. A GitHub repository containing this project.
+2. A PyPI project named `cellon` or permission to create it.
+3. A GitHub environment named `pypi`.
+4. A PyPI Trusted Publisher configured for the repository and workflow.
 
-## GitHub Setup
+## PyPI Trusted Publishing
 
-### 1. Initialize Git Repository
+Configure the publisher at PyPI under **Publishing** with:
 
-```bash
-cd cello
-git init
-git add .
-git commit -m "Initial commit: Cello v2.0.0"
-```
+- Owner: the GitHub organization or user that owns the repository
+- Repository: the repository name
+- Workflow name: `.github/workflows/publish.yml`
+- Environment: `pypi`
 
-### 2. Create GitHub Repository
+For Test PyPI, configure a second publisher with the same repository and workflow, using the environment selected by your Test PyPI policy.
 
-1. Go to https://github.com/new
-2. Create a new repository named `cello`
-3. **Don't** initialize with README (we already have one)
+The workflow requests the `id-token: write` permission and uses `pypa/gh-action-pypi-publish`; no `PYPI_API_TOKEN` secret is needed.
 
-### 3. Push to GitHub
+## Production Release
 
-```bash
-git remote add origin https://github.com/YOUR_USERNAME/cello.git
-git branch -M main
-git push -u origin main
-```
+1. Update the version in both `Cargo.toml` and `pyproject.toml`.
+2. Commit and push the version change.
+3. Create and publish a GitHub Release.
+4. GitHub Actions builds the sdist and platform wheels, then publishes them to `https://pypi.org/project/cellon/`.
 
-## PyPI Setup
+The production publish job only runs for a published GitHub Release.
 
-### 1. Create PyPI API Token
+## Test PyPI
 
-1. Go to https://pypi.org/manage/account/
-2. Scroll to "API tokens"
-3. Click "Add API token"
-4. Name: `cello-github-actions`
-5. Scope: `Entire account` (or project-specific after first upload)
-6. Copy the token (starts with `pypi-`)
+Start the `Publish Cellon to PyPI` workflow manually from GitHub Actions and set `publish_to_test_pypi` to `true`. The workflow publishes the artifacts to Test PyPI instead of production PyPI.
 
-### 2. Add Token to GitHub Secrets
-
-1. Go to your GitHub repo → Settings → Secrets and variables → Actions
-2. Click "New repository secret"
-3. Name: `PYPI_API_TOKEN`
-4. Value: Paste your PyPI token
-5. Click "Add secret"
-
-### 3. (Optional) Test PyPI Token
-
-For testing, also create a Test PyPI token:
-1. Go to https://test.pypi.org/manage/account/
-2. Create token named `cello-github-actions`
-3. Add to GitHub as `TEST_PYPI_API_TOKEN`
-
-## Publishing Workflow
-
-### Automated Publishing (Recommended)
-
-The GitHub Actions workflow (`.github/workflows/publish.yml`) automatically publishes when you create a release:
-
-1. **Update version** in `Cargo.toml` and `pyproject.toml`:
-   ```toml
-   # Cargo.toml
-   version = "2.0.0"
-   
-   # pyproject.toml
-   version = "2.0.0"
-   ```
-
-2. **Commit and push**:
-   ```bash
-   git add Cargo.toml pyproject.toml
-   git commit -m "Bump version to 2.0.0"
-   git push
-   ```
-
-3. **Create a GitHub Release**:
-   - Go to your repo → Releases → Draft a new release
-   - Tag: `v2.0.0` (create new tag)
-   - Title: `Cello v2.0.0`
-   - Description: Release notes
-   - Click "Publish release"
-
-4. **GitHub Actions** will automatically:
-   - Build wheels for Linux, macOS, Windows (x86_64 and aarch64)
-   - Build source distribution
-   - Upload all to PyPI
-
-### Manual Publishing
-
-If you prefer to publish manually:
+## Installation
 
 ```bash
-# Install maturin
-pip install maturin twine
-
-# Build wheels
-maturin build --release
-
-# Build source distribution
-maturin sdist
-
-# Upload to PyPI
-twine upload target/wheels/*.whl target/wheels/*.tar.gz
+pip install cellon
 ```
 
-## Version Numbering
+The distribution is named `cellon`. The historical Python import namespace `cello` remains available, so both forms work:
 
-Follow semantic versioning (SemVer):
-- **MAJOR.MINOR.PATCH** (e.g., `2.0.0`)
-- **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)
-- **PATCH**: Bug fixes (backward compatible)
-
-## Post-Publishing
-
-After publishing, users can install with:
-
-```bash
-pip install cello
+```python
+from cellon import App
+# Existing applications may continue to use:
+from cello import App
 ```
+
+## CI Build Matrix
+
+The workflow builds on GitHub-hosted runners for:
+
+- Linux x86_64 and aarch64
+- macOS aarch64
+- Windows x86_64
+- Source distribution
+
+The native extension keeps the `cello._cello` module name for compatibility with existing applications.
 
 ## Troubleshooting
 
-### "Project name already exists"
-- PyPI names are globally unique
-- Try: `cello-framework`, `py-cello`, or similar
+### Trusted publishing fails
 
-### "Invalid API token"
-- Ensure token is correctly copied
-- Check token scope includes your project
-- Regenerate if needed
+Check that the PyPI publisher exactly matches the GitHub owner, repository, workflow path, and `pypi` environment. Also verify that the job has `id-token: write` permission.
 
-### Build fails on CI
-- Check Rust version compatibility
-- Verify maturin version matches locally
-- Review failed action logs
+### Version already exists
 
-## Files Structure for Publishing
+PyPI versions are immutable. Bump the version in both `Cargo.toml` and `pyproject.toml`, then publish a new GitHub Release.
 
-```
-cello/
-├── .github/
-│   └── workflows/
-│       ├── ci.yml          # CI: lint, test, build
-│       └── publish.yml     # Publish to PyPI
-├── src/                    # Rust source
-├── python/cello/          # Python package
-├── tests/                  # Python tests
-├── Cargo.toml              # Rust config (version here!)
-├── pyproject.toml          # Python config (version here!)
-├── README.md               # PyPI description
-└── LICENSE                 # MIT license
-```
+### CI build fails
+
+Review the failed workflow logs. The repository intentionally does not build release artifacts on the developer machine; the GitHub runner is the source of published artifacts.

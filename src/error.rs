@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+use crate::json::python_to_json;
 use crate::request::Request;
 use crate::response::Response;
 
@@ -275,6 +276,8 @@ pub struct PythonExceptionInfo {
     pub file: Option<String>,
     /// Line number (if available).
     pub line: Option<u32>,
+    /// The original Python exception instance, preserved for custom handlers.
+    pub exception: Option<PyObject>,
 }
 
 impl PythonExceptionInfo {
@@ -296,6 +299,7 @@ impl PythonExceptionInfo {
             traceback,
             file: None,
             line: None,
+            exception: Some(err.value(py).into_py(py)),
         }
     }
 }
@@ -334,7 +338,16 @@ impl PyErrorHandler {
                 }
             }
 
-            match self.handler.call1(py, (error_dict, request.clone())) {
+            let exception = match error {
+                AppError::PythonException(info) => info
+                    .exception
+                    .as_ref()
+                    .map(|value| value.clone_ref(py))
+                    .unwrap_or_else(|| error_dict.into_py(py)),
+                _ => error_dict.into_py(py),
+            };
+
+            match self.handler.call1(py, (request.clone(), exception)) {
                 Ok(result) => {
                     // Check if result is a Response
                     if let Ok(response) = result.extract::<Response>(py) {
@@ -350,6 +363,10 @@ impl PyErrorHandler {
                         resp.set_body(s.into_bytes());
                         resp.set_header("Content-Type", "application/json");
                         return resp;
+                    }
+                    // Accept any JSON-serializable value as a response body.
+                    if let Ok(json_value) = python_to_json(py, result.as_ref(py)) {
+                        return Response::from_json_value(json_value, error.status_code());
                     }
                     // Fallback to default error response
                     error.to_response()

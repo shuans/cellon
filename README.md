@@ -9,8 +9,8 @@
 
 <p align="center">
   <a href="https://github.com/jagadeesh32/cello/actions/workflows/ci.yml"><img src="https://github.com/jagadeesh32/cello/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://pypi.org/project/cello-framework/"><img src="https://img.shields.io/pypi/v/cello-framework.svg" alt="PyPI"></a>
-  <a href="https://pypi.org/project/cello-framework/"><img src="https://img.shields.io/pypi/pyversions/cello-framework.svg" alt="Python"></a>
+  <a href="https://pypi.org/project/cellon/"><img src="https://img.shields.io/pypi/v/cellon.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/cellon/"><img src="https://img.shields.io/pypi/pyversions/cellon.svg" alt="Python"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
@@ -61,25 +61,19 @@ hardware, or running `wrk` on a separate machine, scales higher.
 ## 📦 Installation
 
 ```bash
-pip install cello-framework
-```
-
-**From source:**
-```bash
-git clone https://github.com/jagadeesh32/cello.git
-cd cello
-pip install maturin
-maturin develop
+pip install cellon
 ```
 
 **Requirements:** Python 3.12+
+
+Release artifacts are built by GitHub Actions. See [`PUBLISHING.md`](PUBLISHING.md) for the PyPI Trusted Publishing setup.
 
 ---
 
 ## 🚀 Quick Start
 
 ```python
-from cello import App, Response
+from cellon import App, Response
 
 app = App()
 
@@ -566,24 +560,7 @@ Cello is built with security as a priority:
 
 ## 🛠️ Development
 
-```bash
-# Setup
-git clone https://github.com/jagadeesh32/cello.git
-cd cello
-python -m venv .venv
-source .venv/bin/activate
-pip install maturin pytest
-
-# Build
-maturin develop
-
-# Test
-pytest tests/ -v
-
-# Lint
-cargo clippy
-cargo fmt
-```
+Source builds and CI checks run in GitHub Actions. See `.github/workflows/ci.yml` for the test matrix and [`PUBLISHING.md`](PUBLISHING.md) for the release workflow. Published users install the package with `pip install cellon`.
 
 ---
 

@@ -12,8 +12,33 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::error::PythonExceptionInfo;
 use crate::json::{python_to_json, python_to_json_bytes_direct};
 use crate::request::Request;
+
+/// Error returned while invoking a Python route handler.
+#[derive(Debug)]
+pub enum HandlerError {
+    Python(PythonExceptionInfo),
+    Message(String),
+}
+
+impl HandlerError {
+    fn from_pyerr(py: Python<'_>, error: PyErr) -> Self {
+        Self::Python(PythonExceptionInfo::from_pyerr(py, &error))
+    }
+}
+
+impl std::fmt::Display for HandlerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Python(error) => write!(f, "{error}"),
+            Self::Message(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for HandlerError {}
 
 /// Offload decision is made per call by timing the handler (default).
 pub const POLICY_AUTO: u8 = 0;
@@ -170,10 +195,10 @@ impl HandlerRegistry {
         handler_id: usize,
         request: Request,
         dependency_container: Arc<crate::dependency::DependencyContainer>,
-    ) -> Result<HandlerResult, String> {
+    ) -> Result<HandlerResult, HandlerError> {
         let meta = self
             .get_meta(handler_id)
-            .ok_or_else(|| format!("Handler {handler_id} not found"))?;
+            .ok_or_else(|| HandlerError::Message(format!("Handler {handler_id} not found")))?;
 
         // PERF: Fast atomic check instead of RwLock read on dependency container
         let has_dependencies = self.has_dependencies.load(Ordering::Relaxed)
@@ -194,7 +219,8 @@ impl HandlerRegistry {
         // blocking pool frees the server thread; the blocking call itself releases
         // the GIL, so they genuinely overlap.
         if should_offload {
-            let (tx, rx) = tokio::sync::oneshot::channel::<Result<HandlerResult, String>>();
+            let (tx, rx) = tokio::sync::oneshot::channel::<Result<HandlerResult, HandlerError>>();
+
             let meta = Arc::clone(&meta);
             let deps = Arc::clone(&dependency_container);
             tokio::task::spawn_blocking(move || {
@@ -208,8 +234,8 @@ impl HandlerRegistry {
                     let final_result = if is_coro {
                         Python::with_gil(|py| {
                             crate::async_loop::run_coroutine_blocking(py, raw.as_ref(py))
-                        })
-                        .map_err(|e| format!("Async handler error: {e}"))?
+                                .map_err(|error| HandlerError::from_pyerr(py, error))
+                        })?
                     } else {
                         raw
                     };
@@ -219,7 +245,7 @@ impl HandlerRegistry {
             });
             return rx
                 .await
-                .map_err(|e| format!("Handler channel error: {e}"))?;
+                .map_err(|e| HandlerError::Message(format!("Handler channel error: {e}")))?;
         }
 
         // ── Phase 1 (GIL): call handler, detect coroutine ──────────────────────
@@ -274,7 +300,7 @@ impl HandlerRegistry {
             // Call the Python handler with the request
             let result = handler
                 .call1(py, (request,))
-                .map_err(|e| format!("Handler error: {e}"))?;
+                .map_err(|e| e.to_string())?;
 
             // Convert the result to a JSON value using SIMD-accelerated conversion
             python_to_json(py, result.as_ref(py))
@@ -295,7 +321,7 @@ impl HandlerRegistry {
 /// Drive a coroutine to completion, then serialize its result.
 ///
 /// Phase 2 (GIL released during I/O waits) + Phase 3 (GIL) of the inline path.
-async fn drive_and_serialize(coro: PyObject) -> Result<HandlerResult, String> {
+async fn drive_and_serialize(coro: PyObject) -> Result<HandlerResult, HandlerError> {
     // ── Phase 2 (GIL released during I/O waits): drive coroutine ────────────
     //
     // The coroutine is submitted to a single PERSISTENT asyncio loop (see
@@ -308,16 +334,17 @@ async fn drive_and_serialize(coro: PyObject) -> Result<HandlerResult, String> {
     // We offload the wait to a blocking thread so the Tokio worker is free; the
     // wait inside `Future.result()` releases the GIL.
     let final_result: PyObject = {
-        let (tx, rx) = tokio::sync::oneshot::channel::<Result<PyObject, String>>();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<PyObject, HandlerError>>();
         tokio::task::spawn_blocking(move || {
             let result = Python::with_gil(|py| {
                 crate::async_loop::run_coroutine_blocking(py, coro.as_ref(py))
+                    .map_err(|error| HandlerError::from_pyerr(py, error))
             });
             let _ = tx.send(result);
         });
         rx.await
-            .map_err(|e| format!("Handler channel error: {e}"))?
-            .map_err(|e| format!("Async handler error: {e}"))?
+            .map_err(|e| HandlerError::Message(format!("Handler channel error: {e}")))?
+            .map_err(|e| e)
     };
 
     // ── Phase 3 (GIL): serialize result ─────────────────────────────────────
@@ -327,10 +354,12 @@ async fn drive_and_serialize(coro: PyObject) -> Result<HandlerResult, String> {
 /// Serialize a handler return value into a `HandlerResult`.
 ///
 /// PERF: Try direct-to-bytes first (skips the intermediate serde_json::Value).
-fn serialize(py: Python<'_>, obj: &PyAny) -> Result<HandlerResult, String> {
-    match python_to_json_bytes_direct(py, obj)? {
+fn serialize(py: Python<'_>, obj: &PyAny) -> Result<HandlerResult, HandlerError> {
+    match python_to_json_bytes_direct(py, obj).map_err(HandlerError::Message)? {
         Some(bytes) => Ok(HandlerResult::JsonBytes(bytes)),
-        None => python_to_json(py, obj).map(HandlerResult::JsonValue),
+        None => python_to_json(py, obj)
+            .map(HandlerResult::JsonValue)
+            .map_err(HandlerError::Message),
     }
 }
 
@@ -346,7 +375,7 @@ fn call_handler(
     dependency_container: &crate::dependency::DependencyContainer,
     has_dependencies: bool,
     time_it: bool,
-) -> Result<(PyObject, bool, Duration), String> {
+) -> Result<(PyObject, bool, Duration), HandlerError> {
     // Time the Python call only, measured *inside* the GIL. Wall-clock around
     // `Python::with_gil` would also count time spent waiting to acquire the GIL,
     // which under concurrency misclassifies cheap handlers as blocking. Skipped
@@ -398,7 +427,7 @@ fn call_handler(
                 // No DI params — fast path
                 meta.handler
                     .call1(py, (request,))
-                    .map_err(|e| format!("Handler error: {e}"))?
+                    .map_err(|e| HandlerError::from_pyerr(py, e))?
             }
             Some(params) => {
                 let kwargs = pyo3::types::PyDict::new(py);
@@ -409,20 +438,20 @@ fn call_handler(
                 }
                 meta.handler
                     .call(py, (request,), Some(kwargs))
-                    .map_err(|e| format!("Handler error: {e}"))?
+                    .map_err(|e| HandlerError::from_pyerr(py, e))?
             }
             None => {
                 // Params not cached yet (should not happen); use fast path
                 meta.handler
                     .call1(py, (request,))
-                    .map_err(|e| format!("Handler error: {e}"))?
+                    .map_err(|e| HandlerError::from_pyerr(py, e))?
             }
         }
     } else {
         // FAST PATH: direct call, no DI, no locks
         meta.handler
             .call1(py, (request,))
-            .map_err(|e| format!("Handler error: {e}"))?
+            .map_err(|e| HandlerError::from_pyerr(py, e))?
     };
 
     // Cache async detection per handler (first call probes, then reads atomically)

@@ -29,7 +29,8 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
-use crate::handler::{HandlerRegistry, HandlerResult};
+use crate::error::{AppError, ErrorHandlerRegistry};
+use crate::handler::{HandlerError, HandlerRegistry, HandlerResult};
 use crate::middleware::{MiddlewareAction, MiddlewareChain};
 use crate::request::Request;
 use crate::response::Response;
@@ -408,6 +409,7 @@ pub struct Server {
     guards: Arc<crate::middleware::guards::GuardsMiddleware>,
     prometheus:
         Arc<parking_lot::RwLock<Option<crate::middleware::prometheus::PrometheusMiddleware>>>,
+    error_handlers: Arc<ErrorHandlerRegistry>,
 }
 
 impl Server {
@@ -422,6 +424,7 @@ impl Server {
         prometheus: Arc<
             parking_lot::RwLock<Option<crate::middleware::prometheus::PrometheusMiddleware>>,
         >,
+        error_handlers: Arc<ErrorHandlerRegistry>,
     ) -> Self {
         let shutdown = ShutdownCoordinator::new(config.shutdown_timeout);
         Server {
@@ -435,6 +438,7 @@ impl Server {
             dependency_container,
             guards,
             prometheus,
+            error_handlers,
         }
     }
 
@@ -457,6 +461,7 @@ impl Server {
             Arc::new(crate::dependency::DependencyContainer::new()),
             Arc::new(crate::middleware::guards::GuardsMiddleware::new()),
             Arc::new(parking_lot::RwLock::new(None)),
+            Arc::new(ErrorHandlerRegistry::new()),
         )
     }
 
@@ -532,6 +537,7 @@ impl Server {
         let dependency_container = self.dependency_container.clone();
         let guards = self.guards.clone();
         let prometheus = self.prometheus.clone();
+        let error_handlers = self.error_handlers.clone();
 
         // Copy limit/timeout config out of self.config (all Copy) so each connection
         // task can capture them cheaply.
@@ -607,6 +613,7 @@ impl Server {
                             let dependency_container = dependency_container.clone();
                             let guards = guards.clone();
                             let prometheus = prometheus.clone();
+                            let error_handlers = error_handlers.clone();
 
                             tokio::task::spawn(async move {
                                 // PERF: Clone Arcs once per connection, not per request.
@@ -619,6 +626,7 @@ impl Server {
                                 let conn_deps = dependency_container;
                                 let conn_guards = guards;
                                 let conn_prometheus = prometheus;
+                                let conn_error_handlers = error_handlers;
                                 // Copy limit/timeout config (all Copy) into the connection scope.
                                 let conn_max_body_size = max_body_size;
                                 let conn_read_body_timeout = read_body_timeout;
@@ -633,6 +641,7 @@ impl Server {
                                     let dependency_container = conn_deps.clone();
                                     let guards = conn_guards.clone();
                                     let prometheus = conn_prometheus.clone();
+                                    let error_handlers = conn_error_handlers.clone();
                                     let req_max_body_size = conn_max_body_size;
                                     let req_read_body_timeout = conn_read_body_timeout;
                                     let req_handler_timeout = conn_handler_timeout;
@@ -650,6 +659,7 @@ impl Server {
                                             &dependency_container,
                                             &guards,
                                             &prometheus,
+                                            &error_handlers,
                                             req_max_body_size,
                                             req_read_body_timeout,
                                             req_handler_timeout,
@@ -825,6 +835,7 @@ async fn handle_request(
     prometheus: &Arc<
         parking_lot::RwLock<Option<crate::middleware::prometheus::PrometheusMiddleware>>,
     >,
+    error_handlers: &Arc<ErrorHandlerRegistry>,
     max_body_size: usize,
     read_body_timeout: Option<Duration>,
     handler_timeout: Option<Duration>,
@@ -1053,6 +1064,7 @@ async fn handle_request(
     }
 
     // Handle route
+    let error_request = request.clone_without_body();
     let has_after_middleware = !middleware.is_empty() || !middleware.is_async_empty();
 
     // PERF: Create lightweight request for after-middleware (no body copy)
@@ -1148,7 +1160,11 @@ async fn handle_request(
         },
         Err(err) => {
             metrics.inc_errors();
-            Response::error(500, &err)
+            let app_error = match err {
+                HandlerError::Python(info) => AppError::PythonException(info),
+                HandlerError::Message(message) => AppError::Internal(message),
+            };
+            error_handlers.handle(&app_error, &error_request, None)
         }
     };
 

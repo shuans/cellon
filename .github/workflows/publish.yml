@@ -1,13 +1,10 @@
-# Publish to PyPI when a new release is created
+# Build and publish Cellon to PyPI entirely in GitHub Actions.
 # Builds wheels for all platforms and uploads to PyPI
 # Platforms: Linux (x86_64, aarch64), macOS (aarch64), Windows (x86_64)
 
-name: Publish to PyPI
+name: Publish Cellon to PyPI
 
 on:
-  push:
-    branches:
-      - release
   release:
     types: [published]
   workflow_dispatch:
@@ -141,14 +138,15 @@ jobs:
   # Publish to PyPI
   # ============================================================================
   publish:
-    name: Publish to PyPI
+    name: Publish Cellon to PyPI
     needs: [build-sdist, build-linux-x86, build-linux-aarch64, build-macos, build-windows]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/release')
+    if: github.event_name == 'release'
     environment:
       name: pypi
-      url: https://pypi.org/project/cello-framework/
+      url: https://pypi.org/project/cellon/
     permissions:
+      contents: read
       id-token: write
 
     steps:
@@ -161,7 +159,7 @@ jobs:
       - name: List artifacts
         run: ls -la dist/
 
-      - name: Publish to PyPI
+      - name: Publish Cellon to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
@@ -171,11 +169,12 @@ jobs:
   # Publish to Test PyPI (manual trigger)
   # ============================================================================
   publish-test:
-    name: Publish to Test PyPI
+    name: Publish Cellon to Test PyPI
     needs: [build-sdist, build-linux-x86, build-linux-aarch64, build-macos, build-windows]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_test_pypi == 'true'
     permissions:
+      contents: read
       id-token: write
 
     steps:
@@ -185,7 +184,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publish to Test PyPI
+      - name: Publish Cellon to Test PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/

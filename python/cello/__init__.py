@@ -328,7 +328,7 @@ __all__ = [
     "validate_rate_limit_config",
     "validate_tls_config",
 ]
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 class Blueprint:
@@ -491,6 +491,25 @@ class App:
         self._redis = None  # Native Redis client; set by enable_redis()
         self._database = None  # Native Postgres pool; set by enable_database()
         self.state = _AppState()  # Scratch namespace for user-held resources
+
+    def exception_handler(self, exception_type):
+        """Register a handler for an exception raised by a route.
+
+        The decorated handler receives ``(request, exc)`` and may return a
+        ``Response``, ``ProblemDetails``, string, or JSON-serializable value.
+        """
+        if isinstance(exception_type, str):
+            exception_name = exception_type
+        else:
+            exception_name = getattr(exception_type, "__name__", None)
+            if not exception_name:
+                raise TypeError("exception_handler expects an exception class or type name")
+
+        def decorator(handler):
+            self._app.register_exception_handler(exception_name, handler)
+            return handler
+
+        return decorator
 
     def _register_route(self, method: str, path: str, func, tags: list = None, summary: str = None, description: str = None):
         """Internal: Register a route and track metadata for OpenAPI."""
