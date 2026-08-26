@@ -32,9 +32,10 @@ Get any example running in under a minute.
 git clone https://github.com/jagadeesh32/cello.git
 cd cello
 
-# Set up the environment
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
+# Set up the environment with Python 3.12 explicitly
+python3.12 -m venv .venv && source .venv/bin/activate
+# Windows: py -3.12 -m venv .venv, then .venv\\Scripts\\activate
+python -m pip install -e .
 
 # Run any example
 python examples/hello.py

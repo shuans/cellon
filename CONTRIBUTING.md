@@ -8,7 +8,7 @@ Thank you for your interest in contributing to Cello! 🐍
 
 - Python 3.12+
 - Rust 1.70+
-- maturin (`pip install maturin`)
+- maturin (`python3.12 -m pip install maturin`)
 
 ### Development Setup
 
@@ -17,15 +17,19 @@ Thank you for your interest in contributing to Cello! 🐍
 git clone https://github.com/jagadeesh32/cello.git
 cd cello
 
-# Create virtual environment
-python -m venv .venv
+# Create the environment with Python 3.12 explicitly.
+# On Windows use: py -3.12 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install development dependencies
-pip install maturin pytest ruff requests
+# Verify the active interpreter before installing anything
+python --version  # Must be Python 3.12+
 
-# Build the project
-maturin develop
+# Install development dependencies
+python -m pip install maturin pytest ruff requests
+
+# Build the project with the active Python 3.12 environment
+python -m maturin develop
 
 # Run tests
 pytest tests/ -v
@@ -49,7 +53,7 @@ git checkout -b feature/your-feature-name
 
 ```bash
 # Rebuild after Rust changes
-maturin develop
+python -m maturin develop
 
 # Run Python tests
 pytest tests/ -v

@@ -20,7 +20,7 @@ In this tutorial you will build a real-time chat application using Cello's WebSo
 
 ```bash
 mkdir chat-app && cd chat-app
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install cello-framework
 touch app.py

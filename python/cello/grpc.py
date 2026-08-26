@@ -36,6 +36,8 @@ Example:
         await channel.close()
 """
 
+import asyncio
+import inspect
 from functools import wraps
 from typing import Any, Callable, Optional
 
@@ -212,6 +214,7 @@ class GrpcResponse:
         data: dict = None,
         status_code: int = 0,
         message: str = "OK",
+        metadata: dict = None,
     ):
         """
         Initialize a gRPC response.
@@ -224,7 +227,7 @@ class GrpcResponse:
         self._data = data or {}
         self._status_code = status_code
         self._message = message
-        self._metadata: dict = {}
+        self._metadata: dict = metadata or {}
 
     @property
     def data(self) -> dict:
@@ -374,16 +377,18 @@ class GrpcServer:
         await server.stop()
     """
 
-    def __init__(self, config: Any = None):
-        """
-        Initialize the gRPC server.
+    def __init__(self, config: Any = None, host: str = None, port: int = None):
+        """Initialize the gRPC server.
 
-        Args:
-            config: Optional server configuration dict or object.
+        ``host`` and ``port`` are accepted for the documented convenience API;
+        an explicit address passed to ``start()`` still takes precedence.
         """
         self._config = config
         self._services: dict[str, GrpcService] = {}
         self._running = False
+        self._address = None
+        if host is not None or port is not None:
+            self._address = f"{host or '127.0.0.1'}:{port or 50051}"
 
     def register_service(self, service: GrpcService) -> None:
         """
@@ -426,9 +431,11 @@ class GrpcServer:
         """
         if self._running:
             raise RuntimeError("gRPC server is already running")
-        # In a real implementation, this would call the Rust gRPC engine
-        self._running = True
+        if not isinstance(address, str) or not address.strip():
+            raise ValueError("gRPC address must be a non-empty host:port string")
+        _register_grpc_server(address, self)
         self._address = address
+        self._running = True
 
     async def stop(self) -> None:
         """
@@ -437,12 +444,55 @@ class GrpcServer:
         Waits for in-flight requests to complete before shutting down.
         """
         if self._running:
-            # In a real implementation, this would signal the Rust server to stop
             self._running = False
+            _unregister_grpc_server(self._address, self)
 
     def __repr__(self) -> str:
         service_count = len(self._services)
         return f"GrpcServer(services={service_count}, running={self._running})"
+
+    async def dispatch(self, service: str, method: str, request: GrpcRequest) -> Any:
+        """Dispatch a request to a registered service method."""
+        if not self._running:
+            raise GrpcError(GrpcError.UNAVAILABLE, "gRPC server is not running")
+        target = self._services.get(service)
+        if target is None:
+            raise GrpcError(GrpcError.NOT_FOUND, f"Service '{service}' was not found")
+        method_info = target._methods.get(method)
+        if method_info is None:
+            raise GrpcError(GrpcError.UNIMPLEMENTED, f"Method '{method}' was not found")
+        try:
+            value = method_info["handler"](request)
+            if inspect.isawaitable(value):
+                value = await value
+            if isinstance(value, GrpcResponse) and value.status_code != GrpcError.OK:
+                raise GrpcError(value.status_code, value.message)
+            return value
+        except GrpcError:
+            raise
+        except Exception as exc:
+            raise GrpcError(GrpcError.INTERNAL, str(exc)) from exc
+
+
+_GRPC_SERVERS = {}
+
+
+def _register_grpc_server(address: str, server: GrpcServer) -> None:
+    if address in _GRPC_SERVERS:
+        raise RuntimeError(f"gRPC address '{address}' is already in use")
+    _GRPC_SERVERS[address] = server
+
+
+def _unregister_grpc_server(address: str, server: GrpcServer) -> None:
+    if _GRPC_SERVERS.get(address) is server:
+        del _GRPC_SERVERS[address]
+
+
+def _lookup_grpc_server(target: str) -> GrpcServer:
+    server = _GRPC_SERVERS.get(target)
+    if server is None:
+        raise GrpcError(GrpcError.UNAVAILABLE, f"No gRPC server is listening at '{target}'")
+    return server
 
 
 class GrpcChannel:
@@ -476,6 +526,7 @@ class GrpcChannel:
         """
         self._target = target
         self._connected = False
+        self._server = None
 
     @classmethod
     async def connect(cls, target: str) -> "GrpcChannel":
@@ -489,9 +540,26 @@ class GrpcChannel:
             A connected GrpcChannel instance.
         """
         instance = cls(target)
-        # In a real implementation, this would establish a Rust-powered connection
+        instance._server = _lookup_grpc_server(target)
         instance._connected = True
         return instance
+
+    async def stream(self, service: str, method: str, request: dict):
+        """Yield responses from a streaming RPC."""
+        if not self._connected:
+            raise GrpcError(GrpcError.UNAVAILABLE, "Channel is not connected")
+        if not isinstance(request, dict):
+            raise TypeError("gRPC request must be a dictionary")
+        grpc_request = GrpcRequest(service, method, request)
+        value = await self._server.dispatch(service, method, grpc_request)
+        if hasattr(value, "__aiter__"):
+            async for item in value:
+                yield item
+        elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes, dict)):
+            for item in value:
+                yield item
+        else:
+            yield value
 
     async def call(self, service: str, method: str, request: dict) -> dict:
         """
@@ -514,8 +582,10 @@ class GrpcChannel:
                 message="Channel is not connected",
                 details=f"Target: {self._target}",
             )
-        # Placeholder - real implementation calls Rust gRPC client
-        return {}
+        if not isinstance(request, dict):
+            raise TypeError("gRPC request must be a dictionary")
+        grpc_request = GrpcRequest(service, method, request)
+        return await self._server.dispatch(service, method, grpc_request)
 
     async def close(self) -> None:
         """

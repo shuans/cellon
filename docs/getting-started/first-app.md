@@ -26,18 +26,19 @@ Before starting, make sure you have:
 ```bash
 mkdir my-cello-app
 cd my-cello-app
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
+# Windows: py -3.12 -m venv .venv, then .venv\Scripts\activate
+python --version  # Must be Python 3.12+
 ```
 
 ### 2. Install Cello
 
 ```bash
-pip install maturin
+python -m pip install maturin
 git clone https://github.com/jagadeesh32/cello.git
 cd cello
-maturin develop
+python -m maturin develop
 cd ..
 ```
 

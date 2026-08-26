@@ -20,7 +20,7 @@ In this tutorial you will build a complete JWT-based authentication system. You 
 
 ```bash
 mkdir auth-demo && cd auth-demo
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install cello-framework
 touch app.py

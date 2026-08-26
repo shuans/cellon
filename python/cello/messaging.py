@@ -60,9 +60,11 @@ Example (Decorators):
         # Return value is automatically published to "events" topic
 """
 
+import asyncio
 import json
 import time
 import uuid
+from collections import defaultdict, deque
 from functools import wraps
 from typing import Any, Callable, Optional
 
@@ -502,6 +504,57 @@ class MessageResult:
     """Message processing permanently failed; move to dead-letter queue."""
 
 
+class _InMemoryBroker:
+    """Process-local broker used when no external client adapter is installed.
+
+    It provides deterministic publish/consume semantics for development and
+    tests while keeping the Producer/Consumer contract identical across the
+    supported broker configuration classes.
+    """
+
+    def __init__(self):
+        self._queues = defaultdict(deque)
+        self._condition = asyncio.Condition()
+
+    async def publish(self, message: Message) -> None:
+        async with self._condition:
+            self._queues[message.topic].append(message)
+            self._condition.notify_all()
+
+    async def poll(self, topics: list[str], timeout: float) -> list[Message]:
+        if not topics:
+            return []
+        deadline = asyncio.get_running_loop().time() + max(timeout, 0)
+        async with self._condition:
+            while not any(self._queues[topic] for topic in topics):
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return []
+                try:
+                    await asyncio.wait_for(self._condition.wait(), remaining)
+                except asyncio.TimeoutError:
+                    return []
+            messages = []
+            for topic in topics:
+                queue = self._queues[topic]
+                while queue:
+                    messages.append(queue.popleft())
+            return messages
+
+
+_BROKERS = defaultdict(_InMemoryBroker)
+
+
+def _broker_key(config) -> str:
+    if isinstance(config, KafkaConfig):
+        return "kafka:" + ",".join(config.brokers)
+    if isinstance(config, RabbitMQConfig):
+        return "rabbitmq:" + config.url
+    if isinstance(config, SqsConfig):
+        return "sqs:" + (config.endpoint_url or "aws") + ":" + config.queue_url
+    raise TypeError("config must be KafkaConfig, RabbitMQConfig, or SqsConfig")
+
+
 class Producer:
     """
     Message producer for publishing messages to a queue or topic.
@@ -527,8 +580,11 @@ class Producer:
         Args:
             config: A KafkaConfig, RabbitMQConfig, or SqsConfig instance.
         """
+        if not isinstance(config, (KafkaConfig, RabbitMQConfig, SqsConfig)):
+            raise TypeError("Unsupported message broker configuration")
         self._config = config
         self._connected = False
+        self._broker = _BROKERS[_broker_key(config)]
 
     @classmethod
     async def connect(cls, config) -> "Producer":
@@ -545,8 +601,7 @@ class Producer:
             producer = await Producer.connect(KafkaConfig.local())
         """
         instance = cls(config)
-        # In a real implementation, this would call Rust to create the producer
-        instance._connected = True  # Placeholder
+        instance._connected = True
         return instance
 
     async def send(
@@ -578,7 +633,11 @@ class Producer:
                 headers={"source": "api"},
             )
         """
-        # Placeholder - real implementation calls Rust producer
+        if not self._connected:
+            raise RuntimeError("Producer is closed")
+        if not topic:
+            raise ValueError("topic must not be empty")
+        await self._broker.publish(Message(topic=topic, key=key, value=value, headers=headers))
         return True
 
     async def send_batch(self, messages: list[dict]) -> int:
@@ -600,7 +659,17 @@ class Producer:
                 {"topic": "events", "value": {"type": "b"}},
             ])
         """
-        # Placeholder - real implementation calls Rust batch producer
+        if not self._connected:
+            raise RuntimeError("Producer is closed")
+        for message in messages:
+            if not isinstance(message, dict) or not message.get("topic"):
+                raise ValueError("each message requires a non-empty topic")
+            await self.send(
+                message["topic"],
+                message.get("value"),
+                key=message.get("key"),
+                headers=message.get("headers"),
+            )
         return len(messages)
 
     async def close(self) -> None:
@@ -640,8 +709,11 @@ class Consumer:
         Args:
             config: A KafkaConfig, RabbitMQConfig, or SqsConfig instance.
         """
+        if not isinstance(config, (KafkaConfig, RabbitMQConfig, SqsConfig)):
+            raise TypeError("Unsupported message broker configuration")
         self._config = config
         self._connected = False
+        self._broker = _BROKERS[_broker_key(config)]
         self._subscriptions: list[str] = []
 
     @classmethod
@@ -659,8 +731,7 @@ class Consumer:
             consumer = await Consumer.connect(KafkaConfig.local())
         """
         instance = cls(config)
-        # In a real implementation, this would call Rust to create the consumer
-        instance._connected = True  # Placeholder
+        instance._connected = True
         return instance
 
     async def subscribe(self, topics: list[str]) -> None:
@@ -673,7 +744,11 @@ class Consumer:
         Example:
             await consumer.subscribe(["orders", "events", "notifications"])
         """
-        self._subscriptions = list(topics)
+        if not self._connected:
+            raise RuntimeError("Consumer is closed")
+        if not topics or any(not isinstance(topic, str) or not topic for topic in topics):
+            raise ValueError("topics must contain at least one non-empty topic")
+        self._subscriptions = list(dict.fromkeys(topics))
 
     async def poll(self, timeout_ms: int = 1000) -> list[Message]:
         """
@@ -694,8 +769,11 @@ class Consumer:
                 data = msg.json()
                 process(data)
         """
-        # Placeholder - real implementation calls Rust consumer
-        return []
+        if not self._connected:
+            raise RuntimeError("Consumer is closed")
+        if timeout_ms < 0:
+            raise ValueError("timeout_ms must be non-negative")
+        return await self._broker.poll(self._subscriptions, timeout_ms / 1000)
 
     async def commit(self, message: Message = None) -> None:
         """
@@ -714,8 +792,11 @@ class Consumer:
             # Commit all pending offsets
             await consumer.commit()
         """
-        # Placeholder - real implementation calls Rust consumer commit
+        if not self._connected:
+            raise RuntimeError("Consumer is closed")
         if message is not None:
+            if not isinstance(message, Message):
+                raise TypeError("message must be a Message")
             message.ack()
 
     async def close(self) -> None:

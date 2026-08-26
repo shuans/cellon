@@ -28,23 +28,25 @@ cd cello
 
 ### 2. Create Virtual Environment
 
+Use the Python 3.12 interpreter explicitly when multiple Python versions are installed:
+
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate  # Linux/macOS
-# or
-.venv\Scripts\activate     # Windows
+# Windows: py -3.12 -m venv .venv, then .venv\Scripts\activate
+python --version  # Must be Python 3.12+
 ```
 
 ### 3. Install Dependencies
 
 ```bash
-pip install maturin pytest requests ruff
+python -m pip install maturin pytest requests ruff
 ```
 
 ### 4. Build the Project
 
 ```bash
-maturin develop
+python -m maturin develop
 ```
 
 ### 5. Run Tests

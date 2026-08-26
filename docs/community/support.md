@@ -72,14 +72,18 @@ Python 3.12 and later. Cello uses the PyO3 abi3 stable ABI, so a single binary w
 ### How do I install Cello?
 
 ```bash
-pip install cello-framework
+python3.12 -m pip install cellon
+# Windows: py -3.12 -m pip install cellon
 ```
 
-For development, build from source with Maturin:
+For development, create a Python 3.12 environment and build from source with Maturin:
 
 ```bash
-pip install maturin
-maturin develop
+python3.12 -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+# Windows: py -3.12 -m venv .venv, then .venv\Scripts\activate
+python -m pip install maturin
+python -m maturin develop
 ```
 
 ### How do I report a bug?

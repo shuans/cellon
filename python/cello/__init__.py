@@ -53,6 +53,17 @@ Example:
 
 """
 
+import sys as _sys
+
+if _sys.version_info < (3, 12):
+    raise RuntimeError(
+        "Cellon requires Python 3.12 or newer; "
+        f"the current interpreter is Python {_sys.version_info.major}.{_sys.version_info.minor}. "
+        "Use python3.12 (or py -3.12 on Windows) to create the environment."
+    )
+
+del _sys
+
 from .validation import wrap_handler_with_validation, wrap_handler_with_body
 
 

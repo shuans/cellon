@@ -22,19 +22,49 @@ static EVENT_LOOP: OnceLock<Py<PyAny>> = OnceLock::new();
 
 /// Python helper that creates a new event loop and runs it forever on a daemon
 /// thread, returning the loop object so coroutines can be scheduled onto it.
+///
+/// The helper intentionally uses explicit loop ownership APIs. Python 3.12 no
+/// longer provides a reliable implicit loop for arbitrary threads, so the loop is
+/// installed with `asyncio.set_event_loop()` before it is started and cleared when
+/// the thread exits.
 const RUNNER_SRC: &str = r#"
 import asyncio
+import sys
 import threading
 
 
 def start_loop():
+    if sys.version_info < (3, 12):
+        raise RuntimeError("Cellon requires Python 3.12 or newer")
+
     loop = asyncio.new_event_loop()
 
     def _run():
-        asyncio.set_event_loop(loop)
-        loop.run_forever()
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.run_until_complete(loop.shutdown_default_executor())
+            loop.close()
+            asyncio.set_event_loop(None)
 
-    threading.Thread(target=_run, name="cello-asyncio", daemon=True).start()
+    thread = threading.Thread(
+        target=_run,
+        name="cello-asyncio",
+        daemon=True,
+    )
+    # Do not wait for the thread here: this function is called while Rust holds
+    # the GIL, and waiting would prevent the Python 3.12 loop thread from starting.
+    # `run_coroutine_threadsafe()` safely queues work until `run_forever()` begins.
+    thread.start()
     return loop
 "#;
 
@@ -50,8 +80,9 @@ pub fn get_loop(py: Python<'_>) -> PyResult<Py<PyAny>> {
         return Ok(l.clone_ref(py));
     }
     // Initialisation runs while holding the GIL, so concurrent callers are largely
-    // serialised; in the worst case a rare race starts a second (idle) loop whose
-    // handle is dropped. `OnceLock` guarantees a single winner is ever observed.
+    // serialised. A caller can queue work before the daemon thread reaches
+    // `run_forever()`; `run_coroutine_threadsafe()` handles that ordering safely.
+    // `OnceLock` guarantees a single winner is ever observed.
     let loop_obj = create_loop(py)?;
     match EVENT_LOOP.set(loop_obj.clone_ref(py)) {
         Ok(()) => Ok(loop_obj),

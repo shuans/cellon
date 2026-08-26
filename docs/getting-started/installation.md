@@ -35,11 +35,12 @@ pip install cellon
     We recommend using a virtual environment:
 
     ```bash
-    python -m venv .venv
+    # Use Python 3.12 explicitly when several Python versions are installed.
+    python3.12 -m venv .venv
     source .venv/bin/activate  # Linux/macOS
-    # or
-    .venv\Scripts\activate     # Windows
-    pip install cellon
+    # Windows: py -3.12 -m venv .venv, then .venv\Scripts\activate
+    python --version  # Must be Python 3.12+
+    python -m pip install cellon
     ```
 
 ### From Source
@@ -51,21 +52,22 @@ For the latest development version or to contribute:
 git clone https://github.com/jagadeesh32/cello.git
 cd cello
 
-# Create virtual environment
-python -m venv .venv
+# Create the environment with Python 3.12 explicitly.
+python3.12 -m venv .venv
 source .venv/bin/activate
+python --version  # Must be Python 3.12+
 
-# Install build tools
-pip install maturin
+# Install build tools into the active environment
+python -m pip install maturin
 
 # Build and install
-maturin develop
+python -m maturin develop
 ```
 
 For release builds with optimizations:
 
 ```bash
-maturin develop --release
+python -m maturin develop --release
 ```
 
 ### From GitHub

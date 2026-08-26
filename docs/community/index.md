@@ -72,18 +72,19 @@ Contributing to Cello is straightforward. Follow these steps to go from zero to 
     git clone https://github.com/<your-username>/cello.git
     cd cello
 
-    # Create a virtual environment
-    python -m venv .venv && source .venv/bin/activate
+    # Create the environment with Python 3.12 explicitly.
+    python3.12 -m venv .venv && source .venv/bin/activate
+    # Windows: py -3.12 -m venv .venv, then .venv\\Scripts\\activate
 
     # Install development dependencies
-    pip install maturin pytest requests
+    python -m pip install maturin pytest requests
     ```
 
 === "Step 2 -- Build & Test"
 
     ```bash
     # Build Rust extensions in development mode
-    maturin develop
+    python -m maturin develop
 
     # Run the test suite
     pytest tests/ -v

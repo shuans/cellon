@@ -44,6 +44,8 @@ Example:
 """
 
 import inspect
+import json
+import re
 from functools import wraps
 from typing import Any, Callable, Optional, Dict, List
 
@@ -449,6 +451,205 @@ class DataLoader:
         return results
 
 
+class _GraphQLSyntaxError(ValueError):
+    """Raised when a GraphQL document cannot be parsed."""
+
+
+class _GraphQLParser:
+    """Small dependency-free parser for the GraphQL subset supported by Cello.
+
+    It supports query/mutation/subscription operations, variables, arguments,
+    aliases, nested selection sets, lists, objects, and scalar literals. The
+    parser deliberately stays independent of an optional GraphQL package so the
+    Python integration remains usable in a minimal installation.
+    """
+
+    _token_re = re.compile(
+        r'''(?:\s+|#[^\\n]*|,)+|(?:\.\.\.|[$!():=@\\[\\]{|}])|(?:-?\\d+(?:\\.\\d+)?)|(?:"(?:\\\\.|[^"\\\\])*"|[_A-Za-z][_0-9A-Za-z]*)'''
+    )
+
+    @staticmethod
+    def _scan(source: str, position: int):
+        pattern = re.compile(
+            r'''(?:\s+|#[^\n]*|,)+|(?:\.\.\.|[$!():=@\[\]{|}])|(?:-?\d+(?:\.\d+)?)|(?:"(?:\\.|[^"\\])*"|[_A-Za-z][_0-9A-Za-z]*)'''
+        )
+        return pattern.match(source, position)
+
+    def __init__(self, source: str):
+        self.tokens = []
+        position = 0
+        while position < len(source):
+            match = self._scan(source, position)
+            if match is None:
+                raise _GraphQLSyntaxError(f"unexpected token at position {position}")
+            token = match.group(0)
+            position = match.end()
+            if token.isspace() or token.startswith("#") or token.startswith(","):
+                continue
+            if token in {"...", "$", "!", "(", ")", ":", "=", "@", "[", "]", "{", "|", "}"}:
+                self.tokens.append(token)
+            elif token.startswith('"'):
+                try:
+                    self.tokens.append(json.loads(token))
+                except json.JSONDecodeError as exc:
+                    raise _GraphQLSyntaxError("invalid string literal") from exc
+            elif re.fullmatch(r"-?\d+", token):
+                self.tokens.append(int(token))
+            elif re.fullmatch(r"-?\d+\.\d+", token):
+                self.tokens.append(float(token))
+            else:
+                self.tokens.append(token)
+        self.index = 0
+
+    def _peek(self):
+        return self.tokens[self.index] if self.index < len(self.tokens) else None
+
+    def _take(self, expected=None):
+        token = self._peek()
+        if token is None or (expected is not None and token != expected):
+            wanted = expected or "a token"
+            raise _GraphQLSyntaxError(f"expected {wanted}, got {token!r}")
+        self.index += 1
+        return token
+
+    def document(self):
+        operations = []
+        while self._peek() is not None:
+            operations.append(self.operation())
+        if not operations:
+            raise _GraphQLSyntaxError("document is empty")
+        return operations
+
+    def operation(self):
+        if self._peek() == "{":
+            operation_type, name = "query", None
+        else:
+            operation_type = self._take()
+            if operation_type not in {"query", "mutation", "subscription"}:
+                raise _GraphQLSyntaxError(f"unsupported operation {operation_type!r}")
+            name = None
+            if isinstance(self._peek(), str) and self._peek() not in {"{", "("}:
+                name = self._take()
+            if self._peek() == "(":
+                self._skip_balanced("(", ")")
+        return {"type": operation_type, "name": name, "selection": self.selection_set()}
+
+    def _skip_balanced(self, opening, closing):
+        self._take(opening)
+        depth = 1
+        while depth:
+            token = self._take()
+            if token == opening:
+                depth += 1
+            elif token == closing:
+                depth -= 1
+
+    def selection_set(self):
+        self._take("{")
+        fields = []
+        while self._peek() != "}":
+            if self._peek() is None:
+                raise _GraphQLSyntaxError("unterminated selection set")
+            fields.append(self.field())
+        self._take("}")
+        return fields
+
+    def field(self):
+        first = self._take()
+        if not isinstance(first, str):
+            raise _GraphQLSyntaxError("field name must be an identifier")
+        alias, name = None, first
+        if self._peek() == ":":
+            self._take(":")
+            alias, name = first, self._take()
+        arguments = {}
+        if self._peek() == "(":
+            self._take("(")
+            while self._peek() != ")":
+                arg_name = self._take()
+                self._take(":")
+                arguments[arg_name] = self.value()
+            self._take(")")
+        selection = self.selection_set() if self._peek() == "{" else []
+        return {"name": name, "alias": alias or name, "arguments": arguments, "selection": selection}
+
+    def value(self):
+        token = self._peek()
+        if token == "$":
+            self._take("$")
+            return {"__variable__": self._take()}
+        if token == "[":
+            self._take("[")
+            values = []
+            while self._peek() != "]":
+                values.append(self.value())
+            self._take("]")
+            return values
+        if token == "{":
+            self._take("{")
+            value = {}
+            while self._peek() != "}":
+                key = self._take()
+                self._take(":")
+                value[key] = self.value()
+            self._take("}")
+            return value
+        token = self._take()
+        if token == "true":
+            return True
+        if token == "false":
+            return False
+        if token == "null":
+            return None
+        return token
+
+
+def _resolve_graphql_value(value, variables):
+    if isinstance(value, dict) and set(value) == {"__variable__"}:
+        return variables.get(value["__variable__"])
+    if isinstance(value, list):
+        return [_resolve_graphql_value(item, variables) for item in value]
+    if isinstance(value, dict):
+        return {key: _resolve_graphql_value(item, variables) for key, item in value.items()}
+    return value
+
+
+async def _call_graphql_resolver(resolver, info, arguments):
+    """Invoke a resolver without passing arguments it did not declare."""
+    arguments = _resolve_graphql_value(arguments, info.get("variables", {}))
+    try:
+        signature = inspect.signature(resolver)
+        parameters = signature.parameters
+        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+        if accepts_kwargs:
+            call_args = arguments
+        else:
+            call_args = {name: value for name, value in arguments.items() if name in parameters}
+    except (TypeError, ValueError):
+        call_args = arguments
+    result = resolver(info, **call_args)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+async def _project_graphql_value(value, selection, info):
+    """Apply a GraphQL selection set to dict/object/list resolver results."""
+    if not selection or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        return [await _project_graphql_value(item, selection, info) for item in value]
+    projected = {}
+    for field in selection:
+        name = field["name"]
+        if isinstance(value, dict):
+            child = value.get(name)
+        else:
+            child = getattr(value, name, None)
+        projected[field["alias"]] = await _project_graphql_value(child, field["selection"], info)
+    return projected
+
+
 class GraphQL:
     """
     Main GraphQL execution engine for mounting on a Cello application.
@@ -575,49 +776,83 @@ class GraphQL:
                 operation_name="GetUser"
             )
         """
-        # Placeholder execution - real implementation delegates to Rust engine
+        try:
+            operations = _GraphQLParser(query).document()
+            if operation_name is None and len(operations) > 1:
+                raise _GraphQLSyntaxError("operation_name is required for multiple operations")
+            operation = next(
+                (item for item in operations if operation_name is None or item["name"] == operation_name),
+                None,
+            )
+            if operation is None:
+                raise _GraphQLSyntaxError(f"operation {operation_name!r} was not found")
+            if operation["type"] == "subscription":
+                raise _GraphQLSyntaxError("use GraphQL.subscribe() for subscription operations")
+        except (ValueError, TypeError) as exc:
+            return {"data": None, "errors": [{"message": str(exc)}]}
+
+        resolver_map = self._mutations if operation["type"] == "mutation" else self._queries
         result: Dict[str, Any] = {"data": {}}
         errors: List[Dict[str, Any]] = []
-
-        # Build context info for resolvers
         info = {
             "query": query,
             "variables": variables or {},
-            "operation_name": operation_name,
+            "operation_name": operation_name or operation["name"],
         }
 
-        # Attempt to resolve known query fields
-        for name, resolver in self._queries.items():
+        for field in operation["selection"]:
+            name = field["name"]
+            resolver = resolver_map.get(name)
+            path = [field["alias"]]
+            if resolver is None:
+                errors.append({"message": f"Cannot query field '{name}'", "path": path})
+                continue
             try:
-                if inspect.iscoroutinefunction(resolver):
-                    value = await resolver(info)
-                else:
-                    value = resolver(info)
-                result["data"][name] = value
+                field_info = dict(info, field_name=name, path=path)
+                value = await _call_graphql_resolver(resolver, field_info, field["arguments"])
+                result["data"][field["alias"]] = await _project_graphql_value(
+                    value, field["selection"], field_info
+                )
             except Exception as exc:
-                errors.append({
-                    "message": str(exc),
-                    "path": [name],
-                })
-
-        # Attempt to resolve known mutation fields
-        for name, resolver in self._mutations.items():
-            try:
-                if inspect.iscoroutinefunction(resolver):
-                    value = await resolver(info, **(variables or {}))
-                else:
-                    value = resolver(info, **(variables or {}))
-                result["data"][name] = value
-            except Exception as exc:
-                errors.append({
-                    "message": str(exc),
-                    "path": [name],
-                })
+                errors.append({"message": str(exc), "path": path})
+                result["data"][field["alias"]] = None
 
         if errors:
             result["errors"] = errors
-
         return result
+
+    async def subscribe(
+        self,
+        query: str,
+        variables: Optional[Dict[str, Any]] = None,
+        operation_name: Optional[str] = None,
+    ):
+        """Yield subscription payloads from async-generator resolvers.
+
+        Transport framing is owned by the WebSocket integration; this method
+        provides the execution primitive that a WebSocket handler can consume.
+        """
+        operations = _GraphQLParser(query).document()
+        operation = next(
+            (item for item in operations if operation_name is None or item["name"] == operation_name),
+            None,
+        )
+        if operation is None or operation["type"] != "subscription":
+            raise ValueError("subscribe() requires a subscription operation")
+        info = {"query": query, "variables": variables or {}, "operation_name": operation_name}
+        for field in operation["selection"]:
+            resolver = self._subscriptions.get(field["name"])
+            if resolver is None:
+                raise ValueError(f"Cannot subscribe to field '{field['name']}'")
+            field_info = dict(info, field_name=field["name"], path=[field["alias"]])
+            arguments = _resolve_graphql_value(field["arguments"], info["variables"])
+            stream = resolver(field_info, **arguments)
+            if inspect.isawaitable(stream):
+                stream = await stream
+            if not hasattr(stream, "__aiter__"):
+                stream = iter((stream,))
+            async for value in stream:
+                yield {"data": {field["alias"]: await _project_graphql_value(value, field["selection"], field_info)}}
 
     def get_schema(self) -> Dict[str, Any]:
         """

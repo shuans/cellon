@@ -23,7 +23,7 @@ Create a project directory and install dependencies.
 
 ```bash
 mkdir bookstore-api && cd bookstore-api
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install cello-framework
 ```
