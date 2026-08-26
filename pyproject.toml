@@ -60,6 +60,7 @@ full = [
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
+python-packages = ["cello", "cellon"]
 module-name = "cello._cello" # Keep the native extension import-compatible with existing cello users.
 
 [tool.pytest.ini_options]

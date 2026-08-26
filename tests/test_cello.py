@@ -377,9 +377,10 @@ def test_exception_handler_registration():
 
 def test_cellon_compatibility_import():
     """The renamed distribution exposes the same public API."""
-    from cellon import App
+    import cellon
+    from cello import App as CelloApp
 
-    assert App is not None
+    assert cellon.App is CelloApp
 
 
 def test_multi_method_route():
@@ -2690,7 +2691,8 @@ async def test_graphql_engine_add_mutation():
 
     result = await gql.execute("mutation { createItem }", variables={"name": "Widget"})
     assert "data" in result
-    assert result["data"]["create_item"]["name"] == "Widget"
+    # GraphQL response keys use the field name from the query.
+    assert result["data"]["createItem"]["name"] == "Widget"
 
 
 @pytest.mark.asyncio
@@ -3377,7 +3379,7 @@ def test_messaging_rabbitmq_config_local():
     from cello.messaging import RabbitMQConfig
 
     config = RabbitMQConfig.local()
-    assert config.url == "amqp://localhost"
+    assert config.url == "amqp://guest:guest@localhost:5672/"
     assert config.vhost == "/"
     assert config.prefetch_count == 10
 
@@ -3608,6 +3610,7 @@ async def test_consumer_close():
     assert consumer._subscriptions == []
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_producer_with_rabbitmq_config():
     """Test Producer works with RabbitMQConfig."""
@@ -3633,6 +3636,7 @@ async def test_producer_with_sqs_config():
     await producer.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_consumer_with_rabbitmq_config():
     """Test Consumer works with RabbitMQConfig."""

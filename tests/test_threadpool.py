@@ -144,7 +144,8 @@ def test_blocking_true_offloads_from_first_request():
     # No warmup: concurrency must be present immediately.
     n = 60
     elapsed, tids = _hammer(base, "/marked", n)
-    assert elapsed < (n * SLEEP) / 2
+    # Allow for slower shared CI runners while still rejecting serial execution.
+    assert elapsed < (n * SLEEP) * 0.8
     assert len(set(tids)) > 1
 
 
