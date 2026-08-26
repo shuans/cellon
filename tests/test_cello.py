@@ -2689,7 +2689,7 @@ async def test_graphql_engine_add_mutation():
 
     gql.add_mutation(create_item)
 
-    result = await gql.execute("mutation { createItem }", variables={"name": "Widget"})
+    result = await gql.execute('mutation { createItem(name: "Widget") }')
     assert "data" in result
     # GraphQL response keys use the field name from the query.
     assert result["data"]["createItem"]["name"] == "Widget"
