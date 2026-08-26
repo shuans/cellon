@@ -736,11 +736,11 @@ impl Server {
                                                     hyper_util::rt::TokioExecutor::new(),
                                                 );
                                                 if let Some(h2) = &conn_http2_config {
-                                                    builder.max_concurrent_streams(Some(h2.max_concurrent_streams));
-                                                    builder.initial_connection_window_size(Some(h2.initial_connection_window_size));
-                                                    builder.initial_stream_window_size(Some(h2.initial_stream_window_size));
-                                                    builder.max_frame_size(Some(h2.max_frame_size));
-                                                    builder.max_header_list_size(Some(h2.max_header_list_size));
+                                                    builder.max_concurrent_streams(h2.max_concurrent_streams);
+                                                    builder.initial_connection_window_size(h2.initial_connection_window_size);
+                                                    builder.initial_stream_window_size(h2.initial_stream_window_size);
+                                                    builder.max_frame_size(h2.max_frame_size);
+                                                    builder.max_header_list_size(h2.max_header_list_size);
                                                 }
                                                 builder.serve_connection(TokioIo::new(tls_stream), service).await
                                             } else {

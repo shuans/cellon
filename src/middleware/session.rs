@@ -451,7 +451,11 @@ impl SessionMiddleware {
 
     /// Set the SameSite cookie attribute.
     pub fn cookie_same_site(mut self, same_site: &str) -> Self {
-        self.cookie_config.same_site = same_site.to_string();
+        self.cookie_config.same_site = match same_site.to_ascii_lowercase().as_str() {
+            "strict" => SameSite::Strict,
+            "none" => SameSite::None,
+            _ => SameSite::Lax,
+        };
         self
     }
 

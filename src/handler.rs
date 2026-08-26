@@ -343,8 +343,7 @@ async fn drive_and_serialize(coro: PyObject) -> Result<HandlerResult, HandlerErr
             let _ = tx.send(result);
         });
         rx.await
-            .map_err(|e| HandlerError::Message(format!("Handler channel error: {e}")))?
-            .map_err(|e| e)
+            .map_err(|e| HandlerError::Message(format!("Handler channel error: {e}")))??
     };
 
     // ── Phase 3 (GIL): serialize result ─────────────────────────────────────
