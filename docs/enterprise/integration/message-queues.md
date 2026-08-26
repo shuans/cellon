@@ -5,12 +5,12 @@ description: Kafka, RabbitMQ, and SQS support in Cello Framework
 
 # Message Queue Integration
 
-Cello provides first-class support for message queues with decorator-based consumers, producers, and configuration for Kafka, RabbitMQ, and AWS SQS.
+Cello provides asynchronous message clients for Redis Streams and RabbitMQ AMQP. Kafka and SQS configuration/decorator APIs remain compatibility adapters and do not create external broker connections yet.
 
 ## Quick Start
 
 ```python
-from cello import App, KafkaConfig, RabbitMQConfig, SqsConfig
+from cello import App, KafkaConfig, RabbitMQConfig, SqsConfig, RedisConfig
 from cello.messaging import kafka_consumer, kafka_producer, Message, MessageResult
 
 app = App()
@@ -29,6 +29,34 @@ def create_order(request):
 
 app.run()
 ```
+
+## Redis Streams and RabbitMQ
+
+Redis Streams and RabbitMQ use real external network clients. Install them with `pip install 'cellon[messaging]'`.
+
+```python
+from cello import RedisConfig, RabbitMQConfig
+from cello.messaging import Consumer, Producer
+
+# Redis Streams: use a RedisConfig(url="redis://localhost:6379") object.
+redis_producer = await Producer.connect(RedisConfig(url="redis://localhost:6379"))
+await redis_producer.send("orders", {"id": 1, "status": "created"})
+await redis_producer.close()
+
+rabbit = RabbitMQConfig.local()
+producer = await Producer.connect(rabbit)
+await producer.send("orders", {"id": 1})
+await producer.close()
+
+consumer = await Consumer.connect(rabbit)
+await consumer.subscribe(["orders"])
+messages = await consumer.poll(timeout_ms=1000)
+for message in messages:
+    await consumer.commit(message)
+await consumer.close()
+```
+
+Redis uses Streams consumer groups and `XACK`; RabbitMQ declares durable queues and uses AMQP acknowledgements. `Message.ack()`/`nack()` update local state, while `Consumer.commit()`/`reject()` perform the broker acknowledgement.
 
 ## Kafka
 
@@ -72,7 +100,7 @@ from cello import KafkaConfig
 
 # Full configuration
 config = KafkaConfig(
-    brokers="broker1:9092,broker2:9092",
+    brokers=["broker1:9092", "broker2:9092"],
     group_id="my-service",
     client_id="cello-app",
     auto_commit=True,
@@ -158,6 +186,8 @@ config = RabbitMQConfig(
 # Local development
 config = RabbitMQConfig.local()  # amqp://guest:guest@localhost:5672
 
+# `enable_rabbitmq()` records the app configuration. Use Producer/Consumer
+# below for the live AMQP connection.
 app.enable_rabbitmq(config)
 ```
 

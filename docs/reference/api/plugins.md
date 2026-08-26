@@ -166,23 +166,14 @@ app.enable_redis(RedisConfig(url="rediss://user:pass@host:6380"))   # TLS (rustl
 
 ## Enterprise patterns & protocols
 
-!!! warning "Announce-only on the App"
-    `enable_grpc`, `enable_messaging`, `enable_rabbitmq`, `enable_sqs`,
-    `enable_event_sourcing`, `enable_cqrs` and `enable_saga` **print their
-    configuration but do not wire runtime behaviour into the HTTP server** —
-    they are convenience announcers. The real functionality lives in dedicated
-    Python modules and is fully usable there:
-
-    | Announcer | Use this instead |
-    | --- | --- |
-    | `enable_grpc` | `from cello.grpc import ...` |
-    | `enable_messaging` / `enable_rabbitmq` / `enable_sqs` | `from cello.messaging import ...` |
-    | `enable_event_sourcing` | `from cello.eventsourcing import ...` |
-    | `enable_cqrs` | `from cello.cqrs import ...` |
-    | `enable_saga` | `from cello.saga import ...` |
-
-    Enabling them is harmless (the server keeps working), but don't expect a
-    `/graphql`-style endpoint to appear from `enable_grpc()` alone.
+!!! warning "Protocol and pattern boundaries"
+    `enable_grpc` creates a real `grpc.aio` server lifecycle and serves registered
+    `GrpcService` instances with JSON generic handlers. It does not expose
+    protobuf-generated wire compatibility, reflection, gRPC-Web, or bidirectional
+    streaming. `enable_messaging`/`enable_rabbitmq`/`enable_sqs` record App
+    configuration; use `cello.messaging.Producer` and `Consumer` for the real
+    Redis Streams and RabbitMQ clients. `enable_event_sourcing` opens the Python
+    EventStore during lifecycle startup; CQRS and Saga remain configuration-only.
 
 ---
 
@@ -195,5 +186,6 @@ Every plugin above with an HTTP effect is asserted against a live server in
 pytest tests/test_plugins.py -v
 ```
 
-The announce-only plugins are covered by a test that asserts enabling them does
-not break the server.
+The configuration-only plugins are covered by a test that asserts enabling them
+does not break the server; gRPC and Event Sourcing additionally register real
+lifecycle resources.

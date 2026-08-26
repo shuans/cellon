@@ -92,6 +92,7 @@ app.enable_sagas()
 
 ```python
 from cello import App, EventSourcingConfig, CqrsConfig, SagaConfig
+from cello import EventSourcingConfig
 from cello.eventsourcing import Aggregate, Event, event_handler
 from cello.cqrs import Command, Query, command_handler, query_handler
 from cello.saga import Saga, SagaStep
@@ -109,10 +110,7 @@ class Order(Aggregate):
         self.id = event.order_id
         self.status = "created"
 
-app.enable_event_sourcing(EventSourcingConfig(
-    storage="postgresql://localhost/events",
-    snapshot_interval=100,
-))
+app.enable_event_sourcing(EventSourcingConfig.duckdb("./data/events.duckdb"))
 
 # CQRS
 class CreateOrderCommand(Command):

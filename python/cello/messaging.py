@@ -1,200 +1,75 @@
+"""Async message queue adapters for Redis Streams and RabbitMQ AMQP.
+
+Redis and RabbitMQ use their real network clients. Kafka and SQS keep the
+existing deterministic in-process adapter until dedicated clients are added.
 """
-Cello Message Queue Adapter Module.
 
-Provides Python-friendly wrappers for message queue operations
-with Kafka, RabbitMQ, and AWS SQS support. Includes producer/consumer
-patterns, decorator-based message handling, and configuration classes.
-
-Example (Kafka):
-    from cello import App
-    from cello.messaging import KafkaConfig, Producer, Consumer, Message
-
-    app = App()
-    kafka_config = KafkaConfig(brokers=["localhost:9092"], group_id="my-group")
-
-    @app.on_event("startup")
-    async def setup():
-        app.state.producer = await Producer.connect(kafka_config)
-        app.state.consumer = await Consumer.connect(kafka_config)
-        await app.state.consumer.subscribe(["orders", "events"])
-
-    @app.post("/publish")
-    async def publish(request):
-        data = request.json()
-        await app.state.producer.send("orders", value=data)
-        return {"published": True}
-
-    @app.on_event("shutdown")
-    async def teardown():
-        await app.state.producer.close()
-        await app.state.consumer.close()
-
-Example (RabbitMQ):
-    from cello.messaging import RabbitMQConfig, Producer, Consumer
-
-    rabbit_config = RabbitMQConfig(url="amqp://guest:guest@localhost", prefetch_count=20)
-
-    producer = await Producer.connect(rabbit_config)
-    await producer.send("tasks", value={"action": "process", "id": 42})
-
-Example (SQS):
-    from cello.messaging import SqsConfig, Producer, Consumer
-
-    sqs_config = SqsConfig(region="us-west-2", queue_url="https://sqs.us-west-2.amazonaws.com/123/my-queue")
-
-    producer = await Producer.connect(sqs_config)
-    await producer.send("my-queue", value={"event": "order_created"})
-
-Example (Decorators):
-    from cello.messaging import kafka_consumer, kafka_producer
-
-    @kafka_consumer(topic="orders", group="order-processor")
-    async def process_order(message):
-        order = message.json()
-        print(f"Processing order {order['id']}")
-        return MessageResult.ACK
-
-    @kafka_producer(topic="events")
-    async def create_event(request):
-        return {"event": "user_signup", "user_id": 123}
-        # Return value is automatically published to "events" topic
-"""
+from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 import uuid
 from collections import defaultdict, deque
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 
 def _is_async(func: Callable) -> bool:
-    """Check if a function is async."""
-    import inspect
     return inspect.iscoroutinefunction(func)
 
 
 def kafka_consumer(topic: str, group: str = None, auto_commit: bool = True) -> Callable:
-    """
-    Decorator that wraps an async handler to consume messages from a Kafka topic.
-
-    The decorated function receives a Message object and should return a
-    MessageResult indicating how the message should be acknowledged.
-
-    Args:
-        topic: Kafka topic to consume from.
-        group: Consumer group ID. If None, a unique group is generated.
-        auto_commit: Whether to automatically commit offsets (default: True).
-
-    Returns:
-        Decorator function for the message handler.
-
-    Example:
-        @kafka_consumer(topic="orders", group="processor")
-        async def handle_order(message):
-            order = message.json()
-            await process(order)
-            return MessageResult.ACK
-    """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            # In a real implementation, this wrapper is registered with the
-            # Rust consumer loop which calls it for each incoming message.
-            result = await func(*args, **kwargs) if _is_async(func) else func(*args, **kwargs)
-            return result
+            result = func(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
 
-        # Attach metadata for the Rust runtime to discover
         wrapper._cello_consumer = True
         wrapper._cello_consumer_topic = topic
         wrapper._cello_consumer_group = group
         wrapper._cello_consumer_auto_commit = auto_commit
         return wrapper
+
     return decorator
 
 
 def kafka_producer(topic: str) -> Callable:
-    """
-    Decorator that wraps a function to auto-publish its return value to a Kafka topic.
-
-    The return value of the decorated function is serialized as JSON and
-    sent to the specified topic. If the return value is None, no message
-    is published.
-
-    Args:
-        topic: Kafka topic to publish to.
-
-    Returns:
-        Decorator function for the producer handler.
-
-    Example:
-        @kafka_producer(topic="events")
-        async def emit_event(request):
-            return {"event": "user_signup", "user_id": 123}
-            # Return value is automatically published to "events" topic
-    """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            result = await func(*args, **kwargs) if _is_async(func) else func(*args, **kwargs)
-
-            # Auto-publish return value if not None
+            result = func(*args, **kwargs)
+            result = await result if inspect.isawaitable(result) else result
             if result is not None:
-                # The Rust runtime intercepts this metadata to perform the
-                # actual publish. In the placeholder implementation we
-                # attach the publish intent to the wrapper.
-                wrapper._cello_last_publish = {
-                    "topic": topic,
-                    "value": result,
-                }
+                wrapper._cello_last_publish = {"topic": topic, "value": result}
             return result
 
-        # Attach metadata for the Rust runtime to discover
         wrapper._cello_producer = True
         wrapper._cello_producer_topic = topic
         return wrapper
+
     return decorator
 
 
 class KafkaConfig:
-    """
-    Configuration for Kafka connections.
-
-    Provides broker addresses, consumer group settings, and tuning parameters
-    for both producers and consumers.
-
-    Example:
-        config = KafkaConfig(
-            brokers=["kafka1:9092", "kafka2:9092"],
-            group_id="order-service",
-            client_id="cello-app",
-            session_timeout_ms=30000,
-            max_poll_records=500,
-        )
-    """
-
     def __init__(
         self,
-        brokers: list[str] = None,
+        brokers: list[str] | str = None,
         group_id: str = None,
         client_id: str = None,
         auto_commit: bool = True,
         session_timeout_ms: int = 30000,
         max_poll_records: int = 500,
     ):
-        """
-        Initialize Kafka configuration.
-
-        Args:
-            brokers: List of broker addresses (default: ["localhost:9092"]).
-            group_id: Consumer group ID (default: None).
-            client_id: Client identifier (default: None).
-            auto_commit: Automatically commit offsets (default: True).
-            session_timeout_ms: Session timeout in milliseconds (default: 30000).
-            max_poll_records: Maximum records per poll (default: 500).
-        """
-        self.brokers = brokers or ["localhost:9092"]
+        if brokers is None:
+            brokers = ["localhost:9092"]
+        if isinstance(brokers, str):
+            brokers = [item.strip() for item in brokers.split(",") if item.strip()]
+        if not brokers:
+            raise ValueError("brokers must contain at least one address")
+        self.brokers = list(brokers)
         self.group_id = group_id
         self.client_id = client_id
         self.auto_commit = auto_commit
@@ -203,53 +78,17 @@ class KafkaConfig:
 
     @classmethod
     def local(cls) -> "KafkaConfig":
-        """
-        Create a KafkaConfig for local development with localhost defaults.
-
-        Returns:
-            KafkaConfig configured for localhost:9092.
-
-        Example:
-            config = KafkaConfig.local()
-        """
-        return cls(
-            brokers=["localhost:9092"],
-            group_id="cello-local",
-            client_id="cello-dev",
-        )
+        return cls(["localhost:9092"], group_id="cello-local", client_id="cello-dev")
 
 
 class RabbitMQConfig:
-    """
-    Configuration for RabbitMQ connections.
-
-    Provides connection URL, virtual host, and consumer tuning parameters.
-
-    Example:
-        config = RabbitMQConfig(
-            url="amqp://user:pass@rabbitmq.example.com:5672",
-            vhost="/production",
-            prefetch_count=20,
-            heartbeat=60,
-        )
-    """
-
     def __init__(
         self,
-        url: str = "amqp://localhost",
+        url: str = "amqp://guest:guest@localhost:5672/",
         vhost: str = "/",
         prefetch_count: int = 10,
         heartbeat: int = 60,
     ):
-        """
-        Initialize RabbitMQ configuration.
-
-        Args:
-            url: AMQP connection URL (default: "amqp://localhost").
-            vhost: Virtual host (default: "/").
-            prefetch_count: Number of prefetched messages per consumer (default: 10).
-            heartbeat: Heartbeat interval in seconds (default: 60).
-        """
         self.url = url
         self.vhost = vhost
         self.prefetch_count = prefetch_count
@@ -257,39 +96,10 @@ class RabbitMQConfig:
 
     @classmethod
     def local(cls) -> "RabbitMQConfig":
-        """
-        Create a RabbitMQConfig for local development with localhost defaults.
-
-        Returns:
-            RabbitMQConfig configured for amqp://localhost.
-
-        Example:
-            config = RabbitMQConfig.local()
-        """
-        return cls(
-            url="amqp://localhost",
-            vhost="/",
-            prefetch_count=10,
-            heartbeat=60,
-        )
+        return cls()
 
 
 class SqsConfig:
-    """
-    Configuration for AWS SQS connections.
-
-    Provides region, queue URL, and polling parameters. Supports
-    localstack for local development.
-
-    Example:
-        config = SqsConfig(
-            region="us-west-2",
-            queue_url="https://sqs.us-west-2.amazonaws.com/123456789/my-queue",
-            max_messages=10,
-            wait_time_secs=20,
-        )
-    """
-
     def __init__(
         self,
         region: str = "us-east-1",
@@ -298,16 +108,6 @@ class SqsConfig:
         max_messages: int = 10,
         wait_time_secs: int = 20,
     ):
-        """
-        Initialize SQS configuration.
-
-        Args:
-            region: AWS region (default: "us-east-1").
-            queue_url: SQS queue URL (default: "").
-            endpoint_url: Custom endpoint URL for localstack or compatible services (default: None).
-            max_messages: Maximum messages per receive call (default: 10).
-            wait_time_secs: Long polling wait time in seconds (default: 20).
-        """
         self.region = region
         self.queue_url = queue_url
         self.endpoint_url = endpoint_url
@@ -316,43 +116,11 @@ class SqsConfig:
 
     @classmethod
     def local(cls, queue_url: str) -> "SqsConfig":
-        """
-        Create an SqsConfig for local development with localstack defaults.
-
-        Args:
-            queue_url: The SQS queue URL on localstack.
-
-        Returns:
-            SqsConfig configured for localstack on localhost:4566.
-
-        Example:
-            config = SqsConfig.local("http://localhost:4566/000000000000/my-queue")
-        """
-        return cls(
-            region="us-east-1",
-            queue_url=queue_url,
-            endpoint_url="http://localhost:4566",
-            max_messages=10,
-            wait_time_secs=5,
-        )
+        return cls(region="us-east-1", queue_url=queue_url, endpoint_url="http://localhost:4566", wait_time_secs=5)
 
 
 class Message:
-    """
-    Represents a message consumed from a queue.
-
-    Provides access to the message payload, headers, and methods
-    for acknowledging or rejecting the message.
-
-    Example:
-        @kafka_consumer(topic="orders", group="processor")
-        async def handle(message):
-            print(message.topic)         # "orders"
-            print(message.text)          # raw string value
-            data = message.json()        # parsed JSON
-            print(data["order_id"])
-            message.ack()
-    """
+    MAX_JSON_SIZE = 10 * 1024 * 1024
 
     def __init__(
         self,
@@ -363,155 +131,58 @@ class Message:
         headers: dict = None,
         timestamp: float = None,
     ):
-        """
-        Initialize a Message.
-
-        Args:
-            id: Unique message identifier (default: auto-generated UUID).
-            topic: Topic or queue the message originated from (default: "").
-            key: Message key for partitioning (default: None).
-            value: Message payload (default: None).
-            headers: Message headers as a dictionary (default: None).
-            timestamp: Message timestamp as Unix epoch (default: None).
-        """
         self.id = id or str(uuid.uuid4())
         self.topic = topic
         self.key = key
         self.value = value
         self.headers = headers or {}
-        self.timestamp = timestamp or time.time()
+        self.timestamp = time.time() if timestamp is None else timestamp
         self._acked = False
         self._nacked = False
+        self._ack_callback = None
+        self._nack_callback = None
 
     @property
     def text(self) -> str:
-        """
-        Return the message value as a string.
-
-        Returns:
-            String representation of the message value.
-        """
         if self.value is None:
             return ""
         if isinstance(self.value, bytes):
             return self.value.decode("utf-8")
         return str(self.value)
 
-    # Maximum size in bytes for JSON deserialization to prevent
-    # denial-of-service via extremely large payloads.
-    MAX_JSON_SIZE: int = 10 * 1024 * 1024  # 10 MB
-
     def json(self) -> Any:
-        """
-        Parse the message value as JSON.
-
-        SECURITY: Enforces a size limit (MAX_JSON_SIZE, default 10 MB) on the
-        raw payload before parsing to prevent denial-of-service via
-        oversized messages. The parsed result must be a dict or list;
-        other JSON top-level types (strings, numbers, booleans, null)
-        are rejected to reduce the risk of type-confusion bugs.
-
-        Returns:
-            Parsed JSON value (dict or list).
-
-        Raises:
-            json.JSONDecodeError: If the value is not valid JSON.
-            ValueError: If the payload exceeds MAX_JSON_SIZE or the parsed
-                        result is not a dict or list.
-        """
         raw = self.value
-
-        # Already a dict/list -- return as-is
         if isinstance(raw, (dict, list)):
             return raw
-
         if isinstance(raw, bytes):
             if len(raw) > self.MAX_JSON_SIZE:
-                raise ValueError(
-                    f"Message payload size ({len(raw)} bytes) exceeds "
-                    f"maximum allowed ({self.MAX_JSON_SIZE} bytes)"
-                )
+                raise ValueError("Message payload exceeds maximum allowed size")
             raw = raw.decode("utf-8")
-        elif isinstance(raw, str):
-            if len(raw.encode("utf-8")) > self.MAX_JSON_SIZE:
-                raise ValueError(
-                    f"Message payload size exceeds "
-                    f"maximum allowed ({self.MAX_JSON_SIZE} bytes)"
-                )
-        else:
+        elif not isinstance(raw, str):
             raw = str(raw)
-
+        if len(raw.encode("utf-8")) > self.MAX_JSON_SIZE:
+            raise ValueError("Message payload exceeds maximum allowed size")
         parsed = json.loads(raw)
-
         if not isinstance(parsed, (dict, list)):
-            raise ValueError(
-                f"Expected JSON object or array, got {type(parsed).__name__}"
-            )
-
+            raise ValueError(f"Expected JSON object or array, got {type(parsed).__name__}")
         return parsed
 
     def ack(self) -> None:
-        """
-        Acknowledge the message.
-
-        Signals to the broker that the message has been successfully processed
-        and can be removed from the queue.
-        """
         self._acked = True
 
     def nack(self) -> None:
-        """
-        Negatively acknowledge the message.
-
-        Signals to the broker that the message was not successfully processed
-        and should be redelivered or moved to a dead-letter queue.
-        """
         self._nacked = True
 
 
 class MessageResult:
-    """
-    Result constants for message processing outcomes.
-
-    Used as return values from consumer handlers to indicate how
-    the broker should handle the message after processing.
-
-    Example:
-        @kafka_consumer(topic="orders", group="processor")
-        async def handle(message):
-            try:
-                process(message.json())
-                return MessageResult.ACK
-            except TransientError:
-                return MessageResult.REQUEUE
-            except PermanentError:
-                return MessageResult.DEAD_LETTER
-    """
-
-    ACK: str = "ack"
-    """Message processed successfully; remove from queue."""
-
-    NACK: str = "nack"
-    """Message processing failed; do not acknowledge."""
-
-    REJECT: str = "reject"
-    """Message is invalid; reject and discard."""
-
-    REQUEUE: str = "requeue"
-    """Message processing failed; requeue for retry."""
-
-    DEAD_LETTER: str = "dead_letter"
-    """Message processing permanently failed; move to dead-letter queue."""
+    ACK = "ack"
+    NACK = "nack"
+    REJECT = "reject"
+    REQUEUE = "requeue"
+    DEAD_LETTER = "dead_letter"
 
 
 class _InMemoryBroker:
-    """Process-local broker used when no external client adapter is installed.
-
-    It provides deterministic publish/consume semantics for development and
-    tests while keeping the Producer/Consumer contract identical across the
-    supported broker configuration classes.
-    """
-
     def __init__(self):
         self._queues = defaultdict(deque)
         self._condition = asyncio.Condition()
@@ -545,266 +216,287 @@ class _InMemoryBroker:
 _BROKERS = defaultdict(_InMemoryBroker)
 
 
+def _config_kind(config) -> str:
+    name = type(config).__name__.lower()
+    url = str(getattr(config, "url", "")).lower()
+    if name in {"redisconfig", "redismessagingconfig"} or url.startswith(("redis://", "rediss://")):
+        return "redis"
+    if isinstance(config, RabbitMQConfig) or name in {"rabbitmqconfig", "rabbitconfig"} or url.startswith(("amqp://", "amqps://")):
+        return "rabbitmq"
+    if isinstance(config, KafkaConfig) or hasattr(config, "brokers"):
+        return "kafka"
+    if isinstance(config, SqsConfig) or hasattr(config, "queue_url"):
+        return "sqs"
+    raise TypeError("config must be KafkaConfig, RabbitMQConfig, SqsConfig, or a Redis config")
+
+
 def _broker_key(config) -> str:
-    if isinstance(config, KafkaConfig):
-        return "kafka:" + ",".join(config.brokers)
-    if isinstance(config, RabbitMQConfig):
-        return "rabbitmq:" + config.url
-    if isinstance(config, SqsConfig):
-        return "sqs:" + (config.endpoint_url or "aws") + ":" + config.queue_url
-    raise TypeError("config must be KafkaConfig, RabbitMQConfig, or SqsConfig")
+    kind = _config_kind(config)
+    if kind == "kafka":
+        brokers = getattr(config, "brokers", [])
+        if isinstance(brokers, str):
+            brokers = [item.strip() for item in brokers.split(",") if item.strip()]
+        return "kafka:" + ",".join(brokers)
+    if kind == "rabbitmq":
+        return "rabbitmq:" + str(getattr(config, "url", ""))
+    if kind == "redis":
+        return "redis:" + str(getattr(config, "url", ""))
+    return "sqs:" + str(getattr(config, "endpoint_url", None) or "aws") + ":" + str(getattr(config, "queue_url", ""))
+
+
+def _encode_value(value: Any) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    return json.dumps(value, separators=(",", ":")).encode("utf-8")
+
+
+def _decode_headers(value: Any) -> dict:
+    if value in (None, b"", ""):
+        return {}
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _field(fields: dict, name: str, default=None):
+    return fields.get(name, fields.get(name.encode("utf-8"), default))
 
 
 class Producer:
-    """
-    Message producer for publishing messages to a queue or topic.
-
-    Wraps the Rust-powered producer with a Pythonic async API.
-    Supports Kafka, RabbitMQ, and SQS backends depending on the
-    config type passed to connect().
-
-    Example:
-        producer = await Producer.connect(KafkaConfig.local())
-        await producer.send("events", value={"type": "user_signup"}, key="user-123")
-        await producer.send_batch([
-            {"topic": "events", "value": {"type": "a"}},
-            {"topic": "events", "value": {"type": "b"}},
-        ])
-        await producer.close()
-    """
-
     def __init__(self, config):
-        """
-        Initialize producer wrapper.
-
-        Args:
-            config: A KafkaConfig, RabbitMQConfig, or SqsConfig instance.
-        """
-        if not isinstance(config, (KafkaConfig, RabbitMQConfig, SqsConfig)):
-            raise TypeError("Unsupported message broker configuration")
         self._config = config
+        self._kind = _config_kind(config)
         self._connected = False
-        self._broker = _BROKERS[_broker_key(config)]
+        self._broker = _BROKERS[_broker_key(config)] if self._kind in {"kafka", "sqs"} else None
+        self._client = None
+        self._channel = None
 
     @classmethod
     async def connect(cls, config) -> "Producer":
-        """
-        Connect to the message broker and create a producer.
-
-        Args:
-            config: A KafkaConfig, RabbitMQConfig, or SqsConfig instance.
-
-        Returns:
-            Connected Producer instance.
-
-        Example:
-            producer = await Producer.connect(KafkaConfig.local())
-        """
         instance = cls(config)
+        if instance._kind == "redis":
+            try:
+                import redis.asyncio as redis
+            except ImportError as exc:
+                raise RuntimeError("Redis messaging requires the 'redis' package") from exc
+            instance._client = redis.from_url(str(config.url), decode_responses=False)
+            await instance._client.ping()
+        elif instance._kind == "rabbitmq":
+            try:
+                import aio_pika
+            except ImportError as exc:
+                raise RuntimeError("RabbitMQ messaging requires the 'aio-pika' package") from exc
+            instance._client = await aio_pika.connect_robust(
+                str(config.url), heartbeat=int(getattr(config, "heartbeat", 60))
+            )
+            instance._channel = await instance._client.channel()
         instance._connected = True
         return instance
 
-    async def send(
-        self,
-        topic: str,
-        value: Any,
-        key: str = None,
-        headers: dict = None,
-    ) -> bool:
-        """
-        Send a single message to a topic or queue.
-
-        The value is automatically serialized as JSON if it is a dict or list.
-
-        Args:
-            topic: Target topic or queue name.
-            value: Message payload (dict, list, str, or bytes).
-            key: Optional message key for partitioning.
-            headers: Optional message headers.
-
-        Returns:
-            True if the message was sent successfully, False otherwise.
-
-        Example:
-            success = await producer.send(
-                "orders",
-                value={"order_id": 42, "total": 99.99},
-                key="order-42",
-                headers={"source": "api"},
-            )
-        """
+    async def send(self, topic: str, value: Any, key: str = None, headers: dict = None) -> bool:
         if not self._connected:
             raise RuntimeError("Producer is closed")
         if not topic:
             raise ValueError("topic must not be empty")
-        await self._broker.publish(Message(topic=topic, key=key, value=value, headers=headers))
+        if self._kind == "redis":
+            await self._client.xadd(topic, {
+                "value": _encode_value(value),
+                "key": (key or "").encode("utf-8"),
+                "headers": json.dumps(headers or {}, separators=(",", ":")).encode("utf-8"),
+            })
+        elif self._kind == "rabbitmq":
+            import aio_pika
+            await self._channel.declare_queue(topic, durable=True)
+            await self._channel.default_exchange.publish(
+                aio_pika.Message(
+                    body=_encode_value(value),
+                    message_id=str(uuid.uuid4()),
+                    headers=headers or {},
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
+                routing_key=topic,
+            )
+        else:
+            await self._broker.publish(Message(topic=topic, key=key, value=value, headers=headers))
         return True
 
     async def send_batch(self, messages: list[dict]) -> int:
-        """
-        Send a batch of messages.
-
-        Each message in the list should be a dictionary with at least a
-        "topic" and "value" key. Optional keys: "key", "headers".
-
-        Args:
-            messages: List of message dictionaries.
-
-        Returns:
-            Number of messages successfully sent.
-
-        Example:
-            count = await producer.send_batch([
-                {"topic": "events", "value": {"type": "a"}, "key": "k1"},
-                {"topic": "events", "value": {"type": "b"}},
-            ])
-        """
         if not self._connected:
             raise RuntimeError("Producer is closed")
         for message in messages:
             if not isinstance(message, dict) or not message.get("topic"):
                 raise ValueError("each message requires a non-empty topic")
-            await self.send(
-                message["topic"],
-                message.get("value"),
-                key=message.get("key"),
-                headers=message.get("headers"),
-            )
+            await self.send(message["topic"], message.get("value"), message.get("key"), message.get("headers"))
         return len(messages)
 
     async def close(self) -> None:
-        """
-        Close the producer connection and flush pending messages.
-
-        Should be called during application shutdown to ensure all
-        buffered messages are delivered.
-        """
         self._connected = False
+        if self._kind == "redis" and self._client is not None:
+            await self._client.aclose()
+        elif self._kind == "rabbitmq" and self._client is not None:
+            await self._client.close()
+        self._client = None
+        self._channel = None
 
 
 class Consumer:
-    """
-    Message consumer for receiving messages from a queue or topic.
-
-    Wraps the Rust-powered consumer with a Pythonic async API.
-    Supports Kafka, RabbitMQ, and SQS backends depending on the
-    config type passed to connect().
-
-    Example:
-        consumer = await Consumer.connect(KafkaConfig.local())
-        await consumer.subscribe(["orders", "events"])
-
-        messages = await consumer.poll(timeout_ms=1000)
-        for msg in messages:
-            print(msg.topic, msg.json())
-            await consumer.commit(msg)
-
-        await consumer.close()
-    """
-
     def __init__(self, config):
-        """
-        Initialize consumer wrapper.
-
-        Args:
-            config: A KafkaConfig, RabbitMQConfig, or SqsConfig instance.
-        """
-        if not isinstance(config, (KafkaConfig, RabbitMQConfig, SqsConfig)):
-            raise TypeError("Unsupported message broker configuration")
         self._config = config
+        self._kind = _config_kind(config)
         self._connected = False
-        self._broker = _BROKERS[_broker_key(config)]
+        self._broker = _BROKERS[_broker_key(config)] if self._kind in {"kafka", "sqs"} else None
+        self._client = None
+        self._channel = None
         self._subscriptions: list[str] = []
+        self._queues: dict[str, Any] = {}
+        self._consumer_name = str(getattr(config, "consumer_name", None) or f"cello-{uuid.uuid4().hex[:8]}")
+        self._group_id = str(getattr(config, "group_id", None) or "cello-consumers")
 
     @classmethod
     async def connect(cls, config) -> "Consumer":
-        """
-        Connect to the message broker and create a consumer.
-
-        Args:
-            config: A KafkaConfig, RabbitMQConfig, or SqsConfig instance.
-
-        Returns:
-            Connected Consumer instance.
-
-        Example:
-            consumer = await Consumer.connect(KafkaConfig.local())
-        """
         instance = cls(config)
+        if instance._kind == "redis":
+            try:
+                import redis.asyncio as redis
+            except ImportError as exc:
+                raise RuntimeError("Redis messaging requires the 'redis' package") from exc
+            instance._client = redis.from_url(str(config.url), decode_responses=False)
+            await instance._client.ping()
+        elif instance._kind == "rabbitmq":
+            try:
+                import aio_pika
+            except ImportError as exc:
+                raise RuntimeError("RabbitMQ messaging requires the 'aio-pika' package") from exc
+            instance._client = await aio_pika.connect_robust(
+                str(config.url), heartbeat=int(getattr(config, "heartbeat", 60))
+            )
+            instance._channel = await instance._client.channel()
         instance._connected = True
         return instance
 
     async def subscribe(self, topics: list[str]) -> None:
-        """
-        Subscribe to one or more topics or queues.
-
-        Args:
-            topics: List of topic or queue names to subscribe to.
-
-        Example:
-            await consumer.subscribe(["orders", "events", "notifications"])
-        """
         if not self._connected:
             raise RuntimeError("Consumer is closed")
         if not topics or any(not isinstance(topic, str) or not topic for topic in topics):
             raise ValueError("topics must contain at least one non-empty topic")
         self._subscriptions = list(dict.fromkeys(topics))
+        if self._kind == "redis":
+            for topic in self._subscriptions:
+                try:
+                    await self._client.xgroup_create(topic, self._group_id, id="0-0", mkstream=True)
+                except Exception as exc:
+                    if "BUSYGROUP" not in str(exc):
+                        raise
+        elif self._kind == "rabbitmq":
+            await self._channel.set_qos(prefetch_count=int(getattr(self._config, "prefetch_count", 10)))
+            for topic in self._subscriptions:
+                self._queues[topic] = await self._channel.declare_queue(topic, durable=True)
 
     async def poll(self, timeout_ms: int = 1000) -> list[Message]:
-        """
-        Poll for new messages from subscribed topics.
-
-        Blocks up to timeout_ms milliseconds waiting for messages.
-        Returns an empty list if no messages are available.
-
-        Args:
-            timeout_ms: Maximum time to wait in milliseconds (default: 1000).
-
-        Returns:
-            List of Message objects received from the broker.
-
-        Example:
-            messages = await consumer.poll(timeout_ms=2000)
-            for msg in messages:
-                data = msg.json()
-                process(data)
-        """
         if not self._connected:
             raise RuntimeError("Consumer is closed")
         if timeout_ms < 0:
             raise ValueError("timeout_ms must be non-negative")
+        if not self._subscriptions:
+            return []
+        if self._kind == "redis":
+            result = await self._client.xreadgroup(
+                self._group_id,
+                self._consumer_name,
+                {topic: ">" for topic in self._subscriptions},
+                count=int(getattr(self._config, "max_messages", 10)),
+                block=timeout_ms,
+            )
+            messages = []
+            for topic, entries in result or []:
+                topic = topic.decode() if isinstance(topic, bytes) else topic
+                for message_id, fields in entries:
+                    message_id = message_id.decode() if isinstance(message_id, bytes) else message_id
+                    key = _field(fields, "key", b"")
+                    value = _field(fields, "value", b"")
+                    headers = _field(fields, "headers")
+                    message = Message(
+                        id=message_id,
+                        topic=topic,
+                        key=key.decode() if isinstance(key, bytes) and key else key or None,
+                        value=value,
+                        headers=_decode_headers(headers),
+                    )
+                    message._ack_callback = lambda msg=message: self._client.xack(
+                        msg.topic, self._group_id, msg.id
+                    )
+
+                    async def redis_nack(requeue=False, msg=message):
+                        # A requeued Redis Stream entry remains pending for
+                        # redelivery; a permanent rejection acknowledges it
+                        # so it leaves the consumer group's PEL.
+                        if not requeue:
+                            await self._client.xack(msg.topic, self._group_id, msg.id)
+
+                    message._nack_callback = redis_nack
+                    messages.append(message)
+            return messages
+        if self._kind == "rabbitmq":
+            messages = []
+            timeout = timeout_ms / 1000
+            for topic in self._subscriptions:
+                try:
+                    incoming = await self._queues[topic].get(fail=False, timeout=timeout)
+                except asyncio.TimeoutError:
+                    continue
+                if incoming is None:
+                    continue
+                message = Message(
+                    id=incoming.message_id or str(uuid.uuid4()),
+                    topic=topic,
+                    value=incoming.body,
+                    headers=dict(incoming.headers or {}),
+                )
+                message._ack_callback = incoming.ack
+                message._nack_callback = incoming.nack
+                messages.append(message)
+            return messages
         return await self._broker.poll(self._subscriptions, timeout_ms / 1000)
 
     async def commit(self, message: Message = None) -> None:
-        """
-        Commit consumer offsets.
-
-        If a message is provided, commits the offset for that specific message.
-        If no message is provided, commits all pending offsets.
-
-        Args:
-            message: Optional specific message to commit (default: None).
-
-        Example:
-            # Commit a specific message
-            await consumer.commit(msg)
-
-            # Commit all pending offsets
-            await consumer.commit()
-        """
         if not self._connected:
             raise RuntimeError("Consumer is closed")
-        if message is not None:
-            if not isinstance(message, Message):
-                raise TypeError("message must be a Message")
-            message.ack()
+        if message is None:
+            return
+        if not isinstance(message, Message):
+            raise TypeError("message must be a Message")
+        callback = message._ack_callback
+        if callback is not None:
+            result = callback()
+            if inspect.isawaitable(result):
+                await result
+        message.ack()
+
+    async def reject(self, message: Message, requeue: bool = False) -> None:
+        if not self._connected:
+            raise RuntimeError("Consumer is closed")
+        if not isinstance(message, Message):
+            raise TypeError("message must be a Message")
+        callback = message._nack_callback
+        if callback is not None:
+            result = callback(requeue=requeue)
+            if inspect.isawaitable(result):
+                await result
+        message.nack()
 
     async def close(self) -> None:
-        """
-        Close the consumer connection.
-
-        Commits any pending offsets and disconnects from the broker.
-        Should be called during application shutdown.
-        """
         self._connected = False
         self._subscriptions = []
+        self._queues = {}
+        if self._kind == "redis" and self._client is not None:
+            await self._client.aclose()
+        elif self._kind == "rabbitmq" and self._client is not None:
+            await self._client.close()
+        self._client = None
+        self._channel = None

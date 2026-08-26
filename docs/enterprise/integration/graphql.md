@@ -5,7 +5,7 @@ description: GraphQL support in Cello Framework - queries, mutations, subscripti
 
 # GraphQL Integration
 
-Cello provides first-class GraphQL support with decorator-based schema definition, DataLoader for N+1 prevention, and WebSocket-based subscriptions.
+Cello provides decorator-based GraphQL schema definition, a Python execution engine, DataLoader support, and HTTP query/mutation mounting on `App`. Subscription execution is available as an engine primitive; WebSocket subscription transport and full schema validation are not included yet.
 
 ## Quick Start
 
@@ -28,7 +28,10 @@ def create_user(info, name: str, email: str) -> dict:
     return {"id": 3, "name": name, "email": email}
 
 schema = Schema().query(users).query(user).mutation(create_user).build()
-result = await schema.execute("{ users }")
+app.mount_graphql(schema)
+
+# The same engine can also be executed directly.
+result = await schema.execute("{ users { id name } }")
 ```
 
 ## Decorators
@@ -157,19 +160,26 @@ Enable GraphQL on your Cello app:
 
 ```python
 from cello import App, GraphQLConfig
+from cello.graphql import Schema
 
 app = App()
-app.enable_graphql(GraphQLConfig(
-    path="/graphql",
+app.mount_graphql(
+    Schema().query(users).mutation(create_user).build(),
+    path=GraphQLConfig().path,
     playground=True,
-    introspection=True
-))
+    introspection=True,
+)
+
+# Alternatively, enable an empty engine and register resolvers before serving.
+# app.enable_graphql(GraphQLConfig(path="/graphql", playground=True, introspection=True))
+# app.graphql.add_query(users)
+# app.graphql.add_mutation(create_user)
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `path` | `/graphql` | GraphQL endpoint path |
-| `playground` | `True` | Enable GraphiQL playground |
+| `playground` | `True` | Enable the lightweight browser query form |
 | `introspection` | `True` | Enable schema introspection |
 
 ## API Reference

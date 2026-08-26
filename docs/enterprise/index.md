@@ -49,8 +49,8 @@ tags:
 
     - :material-database: Async database connection pooling
     - :material-memory: Redis with Pub/Sub & cluster
-    - :octicons-graph-16: GraphQL & gRPC support
-    - :material-email-fast: Kafka, RabbitMQ & SQS adapters
+    - :octicons-graph-16: GraphQL HTTP & JSON generic gRPC
+    - :material-email-fast: Redis Streams & RabbitMQ adapters
 
     [:octicons-arrow-right-24: Integration](integration/database.md)
 
@@ -74,8 +74,8 @@ tags:
     Battle-tested architectural patterns for building resilient, scalable distributed systems.
 
     - :material-history: Event Sourcing with snapshots
-    - :material-call-split: CQRS command/query buses
-    - :material-transit-connection-variant: Saga orchestration
+    - :material-call-split: CQRS configuration (runtime planned)
+    - :material-transit-connection-variant: Saga configuration (runtime planned)
     - :material-electric-switch: Circuit breaker fault tolerance
 
     [:octicons-arrow-right-24: Patterns](../learn/patterns/cqrs.md)
@@ -248,56 +248,40 @@ graph TB
 
     ```python title="GraphQL with DataLoader"
     from cello import App
-    from cello.enterprise import GraphQL, Schema
+    from cello.graphql import Mutation, Query, Schema
 
     app = App()
 
-    schema = Schema()
+    @Query
+    async def users(info):
+        return await db.fetch_all("SELECT * FROM users")
 
-    @schema.query("user")
-    async def resolve_user(info, id: str):
-        return await db.fetch_one("SELECT * FROM users WHERE id = $1", id)
-
-    @schema.query("users")
-    async def resolve_users(info, limit: int = 10):
-        return await db.fetch_all("SELECT * FROM users LIMIT $1", limit)
-
-    @schema.mutation("createUser")
+    @Mutation
     async def create_user(info, name: str, email: str):
         return await db.fetch_one(
             "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING *",
             name, email
         )
 
-    app.mount_graphql("/graphql", schema)
+    app.mount_graphql(Schema().query(users).mutation(create_user).build())
     ```
 
 === ":material-email-fast: Message Queues"
 
-    ```python title="Kafka consumer with message routing"
-    from cello import App
-    from cello.enterprise import Kafka
+    ```python title="RabbitMQ consumer with acknowledgements"
+    from cello import RabbitMQConfig
+    from cello.messaging import Consumer, Producer
 
-    app = App()
-    kafka = Kafka(brokers=["localhost:9092"])
+    config = RabbitMQConfig.local()
+    producer = await Producer.connect(config)
+    await producer.send("orders.created", {"order_id": 1, "items": []})
+    await producer.close()
 
-    @kafka.consumer("orders.created", group="order-processor")
-    async def handle_order_created(message):
-        order = message.value
-        # Process the order
-        await send_confirmation_email(order["user_id"])
-        await update_inventory(order["items"])
-
-    @kafka.producer
-    async def publish_event(topic, event):
-        await kafka.send(topic, event)
-
-    @app.post("/orders")
-    async def create_order(request):
-        order = request.json()
-        saved = await db.save_order(order)
-        await publish_event("orders.created", saved)
-        return {"order_id": saved["id"]}
+    consumer = await Consumer.connect(config)
+    await consumer.subscribe(["orders.created"])
+    for message in await consumer.poll(timeout_ms=1000):
+        await process_order(message.json())
+        await consumer.commit(message)
     ```
 
 ---
@@ -310,7 +294,7 @@ timeline
     section Foundation
         v0.4.0 : Cluster Mode
                : TLS/SSL (rustls)
-               : HTTP/2 & HTTP/3
+               : HTTP/2 (HTTP/3 QUIC pending)
                : Security Headers
                : Session Management
     section Monitoring
@@ -334,12 +318,11 @@ timeline
     section Protocols
         v0.9.0 : GraphQL
                : gRPC
-               : Kafka & RabbitMQ
-               : SQS/SNS
+               : Redis Streams & RabbitMQ AMQP
+               : Kafka/SQS compatibility APIs
     section Patterns
-        v0.10.0 : Event Sourcing
-                : CQRS
-                : Saga Pattern
+        v0.10.0 : Event Sourcing (DuckDB/in-memory)
+                : CQRS/Saga configuration APIs
 ```
 
 ---
@@ -359,17 +342,18 @@ timeline
 | | OpenTelemetry | :material-check-circle:{ style="color: #4caf50" } | v0.7.0 |
 | | Health Checks | :material-check-circle:{ style="color: #4caf50" } | v0.7.0 |
 | **Scalability** | Cluster Mode | :material-check-circle:{ style="color: #4caf50" } | v0.4.0 |
-| | HTTP/2 & HTTP/3 (QUIC) | :material-check-circle:{ style="color: #4caf50" } | v0.4.0 |
+| | HTTP/2 (HTTP/3 QUIC planned) | :material-check-circle:{ style="color: #4caf50" } | v0.4.0 |
 | | TLS/SSL (rustls) | :material-check-circle:{ style="color: #4caf50" } | v0.4.0 |
 | | Circuit Breaker | :material-check-circle:{ style="color: #4caf50" } | v0.6.0 |
 | **Integration** | Database Pooling | :material-check-circle:{ style="color: #4caf50" } | v0.8.0 |
 | | Redis | :material-check-circle:{ style="color: #4caf50" } | v0.8.0 |
 | | GraphQL | :material-check-circle:{ style="color: #4caf50" } | v0.9.0 |
 | | gRPC | :material-check-circle:{ style="color: #4caf50" } | v0.9.0 |
-| | Kafka, RabbitMQ, SQS | :material-check-circle:{ style="color: #4caf50" } | v0.9.0 |
-| **Patterns** | Event Sourcing | :material-check-circle:{ style="color: #4caf50" } | v0.10.0 |
-| | CQRS | :material-check-circle:{ style="color: #4caf50" } | v0.10.0 |
-| | Saga Pattern | :material-check-circle:{ style="color: #4caf50" } | v0.10.0 |
+| | Redis Streams, RabbitMQ | :material-check-circle:{ style="color: #4caf50" } | v0.9.0 |
+| | Kafka/SQS compatibility APIs | :material-progress-clock:{ style="color: #ff9800" } | v0.9.0 |
+| **Patterns** | Event Sourcing (DuckDB/in-memory) | :material-check-circle:{ style="color: #4caf50" } | v0.10.0 |
+| | CQRS runtime | :material-progress-clock:{ style="color: #ff9800" } | v0.10.0 |
+| | Saga runtime | :material-progress-clock:{ style="color: #ff9800" } | v0.10.0 |
 
 ---
 

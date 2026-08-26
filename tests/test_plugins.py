@@ -1,12 +1,12 @@
 """End-to-end verification of the ``App.enable_*`` plugins.
 
 Every plugin that has an observable HTTP effect is driven against a real Cello
-server (daemon thread) and asserted on status codes / headers / bodies. The
-"announce-only" plugins (gRPC, messaging, RabbitMQ, SQS, event-sourcing, CQRS,
-saga) print their configuration but do not wire runtime behaviour into the HTTP
-app — the real functionality lives in the ``cello.grpc`` / ``cello.messaging`` /
-``cello.cqrs`` / ``cello.saga`` / ``cello.eventsourcing`` Python modules — so we
-only assert that enabling them does not break the server.
+server (daemon thread) and asserted on status codes / headers / bodies. The configuration-only plugins (Kafka, SQS, CQRS, saga) print their
+configuration but do not wire runtime behaviour into the HTTP app. Event Sourcing
+registers its EventStore lifecycle hooks; Redis/RabbitMQ clients are opened
+explicitly through ``cello.messaging`` and gRPC services are managed by the real
+``cello.grpc`` lifecycle. These tests only assert that enabling each integration
+does not break the HTTP server.
 
 Regression coverage for bugs fixed in v1.3.0:
   * health checks / GraphQL 404 (fast-404 ran before the middleware chain)
@@ -270,12 +270,12 @@ def test_telemetry_serves():
     assert requests.get(f"{url}/__ping__").status_code == 200
 
 
-# ── Announce-only plugins: enabling them must not break the server ───────────
+# ── Configured plugins and gRPC lifecycle: enabling them must not break the server ──
 
 @pytest.mark.parametrize(
     "enable",
     [
-        lambda app: app.enable_grpc(GrpcConfig()),
+        lambda app: app.enable_grpc(GrpcConfig(address="127.0.0.1:0")),
         lambda app: app.enable_messaging(KafkaConfig(["localhost:9092"])),
         lambda app: app.enable_rabbitmq(RabbitMQConfig()),
         lambda app: app.enable_sqs(SqsConfig(region="us-east-1", queue_url="q")),
@@ -284,7 +284,7 @@ def test_telemetry_serves():
         lambda app: app.enable_saga(),
     ],
 )
-def test_announce_only_plugins_do_not_break_server(enable):
+def test_configured_plugins_do_not_break_server(enable):
     app = _ping_app()
     enable(app)
     url = _serve(app)

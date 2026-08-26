@@ -122,162 +122,97 @@ await redis.set("key", "value", ttl=300)
 
 ## v0.9.0 - API Protocols (Q1 2026) :material-check-circle:{ .green }
 
-### GraphQL Support
+### GraphQL Support (partial)
 
-Schema-first and code-first approaches.
+The Python engine supports decorator-based resolvers, schema building, HTTP GET/POST query and mutation execution, variables, field projection, limited introspection, and DataLoader. Subscription execution is available as an engine primitive; WebSocket transport, federation, and full GraphQL validation remain pending.
 
 ```python
-from cello.graphql import Query, Schema, DataLoader
+from cello import App
+from cello.graphql import Query, Schema
 
 @Query
-def users(info) -> list[User]:
+def users(info) -> list:
     return db.get_users()
 
-schema = Schema().query(users).build()
-app.mount("/graphql", schema)
+app = App()
+app.mount_graphql(Schema().query(users).build())
 ```
 
-**Features:**
-- Subscriptions via WebSocket
-- DataLoader for N+1 prevention
-- Federation support
-- Playground UI
+### gRPC Support (partial)
 
-### gRPC Support
-
-High-performance RPC with protobuf.
+The Python convenience API uses a real `grpc.aio` HTTP/2 transport with JSON serializers, unary calls, and server-streaming calls. It is not wire-compatible with protobuf-generated stubs; reflection, gRPC-Web, bidirectional streaming, and interceptors remain pending.
 
 ```python
+from cello import App, GrpcConfig
 from cello.grpc import GrpcService, grpc_method, GrpcResponse
 
 class UserService(GrpcService):
     @grpc_method
     async def GetUser(self, request):
-        return GrpcResponse.ok({"id": request.id, "name": "Alice"})
+        return GrpcResponse.ok({"id": request.get("id"), "name": "Alice"})
 
+app = App()
+app.enable_grpc(GrpcConfig(address="[::]:50051"))
 app.add_grpc_service(UserService())
 ```
 
-**Features:**
-- Bidirectional streaming
-- gRPC-Web support
-- Reflection service
-- Interceptors
+### Message Queue Adapters (partial)
 
-### Message Queue Adapters
-
-Event-driven architecture support.
+Redis Streams and RabbitMQ AMQP have real asynchronous producer/consumer clients with acknowledgements. Kafka and SQS remain compatibility configuration/decorator APIs without external broker clients.
 
 ```python
-from cello.messaging import kafka_consumer, Message, MessageResult
+from cello import RedisConfig
+from cello.messaging import Producer
 
-@kafka_consumer(topic="orders", group="processors")
-async def process_order(message: Message):
-    data = message.json()
-    await process(data)
-    return MessageResult.ACK
+producer = await Producer.connect(RedisConfig(url="redis://localhost:6379"))
+await producer.send("orders", {"type": "OrderCreated", "order_id": 1})
+await producer.close()
 ```
-
-**Supported:**
-- Apache Kafka
-- RabbitMQ
-- AWS SQS/SNS
-- Redis Streams
 
 ---
 
-## v0.10.0 - Advanced Patterns (Q1 2026) :material-check-circle:{ .green }
+## v0.10.0 - Advanced Patterns (Q1 2026) :material-progress-clock:{ .orange }
+
+The Python Event Sourcing runtime supports DuckDB and in-memory stores. CQRS and Saga integration remain configuration-only and remain in progress.
 
 ### Event Sourcing
 
-Event-driven persistence with aggregate roots, event replay, and snapshots.
+Event-driven persistence with `Event`, `Aggregate`, ordered replay, and persisted snapshots. The current persistent backends are DuckDB and in-memory storage.
 
 ```python
-from cello.eventsourcing import Aggregate, Event, event_handler, EventSourcingConfig
+from cello import App, EventSourcingConfig
+from cello.eventsourcing import Aggregate, Event, event_handler
 
-app.enable_event_sourcing(EventSourcingConfig(
-    storage="postgresql://localhost/events",
-    snapshot_interval=100,
-    enable_replay=True,
-))
-
-class OrderCreated(Event):
-    order_id: str
-    customer_id: str
+app = App()
+app.enable_event_sourcing(EventSourcingConfig.duckdb("./data/events.duckdb"))
 
 class Order(Aggregate):
-    @event_handler(OrderCreated)
+    @event_handler("OrderCreated")
     def on_created(self, event):
-        self.id = event.order_id
-        self.status = "created"
+        self.state["status"] = "created"
+        self.state.update(event.data)
+
+order = Order(aggregate_id="order-1")
+order.apply(Event("OrderCreated", {"customer_id": "customer-1"}))
+# Persist order.uncommitted_events through app.state.event_store at startup.
 ```
 
 **Features:**
-- Aggregate root pattern
+- Aggregate orchestration remains application-level
 - Event replay to rebuild state
 - Snapshot support for performance
-- PostgreSQL, MySQL, and in-memory backends
-- Event versioning and upcasting
+- DuckDB and in-memory backends
+- Optimistic aggregate version checks
+- Event versioning and ordered replay
+- PostgreSQL/MySQL persistence, federation, and upcasting remain planned
 
-### CQRS
+### CQRS (planned)
 
-Command/query separation with dedicated buses.
+`App.enable_cqrs()` currently records configuration only. A complete command/query bus, handler registration, and event synchronization runtime is not part of the implemented public API yet.
 
-```python
-from cello.cqrs import Command, Query, command_handler, query_handler, CqrsConfig
+### Saga Pattern (planned)
 
-app.enable_cqrs(CqrsConfig(enable_event_sync=True))
-
-class CreateOrderCommand(Command):
-    customer_id: str
-    items: list
-
-@command_handler(CreateOrderCommand)
-async def handle_create(command, db):
-    order = Order.create(command.customer_id, command.items)
-    await db.save(order)
-    return order.id
-
-class GetOrderQuery(Query):
-    order_id: str
-
-@query_handler(GetOrderQuery)
-async def handle_get(query, read_db):
-    return await read_db.get_order(query.order_id)
-```
-
-**Features:**
-- Separate read/write models
-- CommandBus and QueryBus
-- Event-driven synchronization
-- Middleware support on buses
-
-### Saga Pattern
-
-Distributed transaction coordination with compensation logic.
-
-```python
-from cello.saga import Saga, SagaStep, SagaConfig
-
-app.enable_sagas(SagaConfig(
-    storage="postgresql://localhost/sagas",
-    max_retries=3,
-    timeout=300,
-))
-
-class OrderSaga(Saga):
-    steps = [
-        SagaStep("reserve_inventory", reserve, compensate=release),
-        SagaStep("charge_payment", charge, compensate=refund),
-        SagaStep("ship_order", create_shipment, compensate=cancel_shipment),
-    ]
-```
-
-**Features:**
-- Automatic compensation on failure
-- Persistent saga state for crash recovery
-- Configurable retry with exponential backoff
-- Timeout support
+`App.enable_saga()` currently records configuration only. Persistent orchestration, compensation, retries, and crash recovery remain planned.
 
 ---
 

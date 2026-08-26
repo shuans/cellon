@@ -614,9 +614,53 @@ def _resolve_graphql_value(value, variables):
     return value
 
 
+def _resolver_candidates(name: str) -> list[str]:
+    """Return both snake_case and camelCase spellings for a field name."""
+    candidates = [name]
+    if "_" in name:
+        parts = name.split("_")
+        candidates.append(parts[0] + "".join(part.capitalize() for part in parts[1:]))
+    else:
+        snake = re.sub(r"(?<!^)([A-Z])", r"_\1", name).lower()
+        if snake != name:
+            candidates.append(snake)
+    return candidates
+
+
+def _field_value(value: Any, name: str) -> Any:
+    """Read a dict/object field using either GraphQL or Python naming."""
+    if isinstance(value, dict):
+        for candidate in _resolver_candidates(name):
+            if candidate in value:
+                return value[candidate]
+        return None
+    for candidate in _resolver_candidates(name):
+        if hasattr(value, candidate):
+            return getattr(value, candidate)
+    return None
+
+
+def _normalize_argument_names(arguments: dict) -> dict:
+    """Accept conventional camelCase GraphQL arguments for Python resolvers."""
+    normalized = {}
+    for name, value in arguments.items():
+        if "_" not in name:
+            chars = []
+            for char in name:
+                if char.isupper():
+                    chars.extend(("_", char.lower()))
+                else:
+                    chars.append(char)
+            name = "".join(chars)
+        normalized[name] = value
+    return normalized
+
+
 async def _call_graphql_resolver(resolver, info, arguments):
     """Invoke a resolver without passing arguments it did not declare."""
-    arguments = _resolve_graphql_value(arguments, info.get("variables", {}))
+    arguments = _normalize_argument_names(
+        _resolve_graphql_value(arguments, info.get("variables", {}))
+    )
     try:
         signature = inspect.signature(resolver)
         parameters = signature.parameters
@@ -642,10 +686,7 @@ async def _project_graphql_value(value, selection, info):
     projected = {}
     for field in selection:
         name = field["name"]
-        if isinstance(value, dict):
-            child = value.get(name)
-        else:
-            child = getattr(value, name, None)
+        child = _field_value(value, name)
         projected[field["alias"]] = await _project_graphql_value(child, field["selection"], info)
     return projected
 
@@ -670,7 +711,11 @@ class GraphQL:
         # {"data": {"hello": "Hello, world!"}}
     """
 
-    def __init__(self, schema: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        schema: Optional[Dict[str, Any]] = None,
+        introspection: bool = True,
+    ):
         """
         Initialize the GraphQL engine.
 
@@ -678,11 +723,60 @@ class GraphQL:
             schema: Optional pre-built schema dictionary. If not provided,
                     resolvers can be registered individually via add_query,
                     add_mutation, and add_subscription.
+            introspection: Whether ``__schema`` and ``__type`` are available.
         """
         self._schema = schema or {}
         self._queries: Dict[str, Callable] = {}
         self._mutations: Dict[str, Callable] = {}
         self._subscriptions: Dict[str, Callable] = {}
+        self._introspection_enabled = introspection
+
+    def set_introspection(self, enabled: bool) -> "GraphQL":
+        """Enable or disable GraphQL introspection for this engine."""
+        self._introspection_enabled = bool(enabled)
+        return self
+
+    def _introspection_type(self, name: str) -> Optional[Dict[str, Any]]:
+        """Build the small introspection type model exposed by this engine."""
+        if name == "Query":
+            fields = self._queries
+        elif name == "Mutation":
+            fields = self._mutations
+        elif name == "Subscription":
+            fields = self._subscriptions
+        else:
+            fields = {}
+
+        if name not in {"Query", "Mutation", "Subscription"}:
+            return None
+        return {
+            "kind": "OBJECT",
+            "name": name,
+            "description": None,
+            "fields": [
+                {
+                    "name": field_name,
+                    "description": None,
+                    "args": [],
+                    "type": {"kind": "SCALAR", "name": _extract_return_type(func) or "JSON"},
+                }
+                for field_name, func in fields.items()
+            ],
+        }
+
+    def _introspection_schema(self) -> Dict[str, Any]:
+        """Return the schema object used by ``__schema`` queries."""
+        types = [self._introspection_type("Query")]
+        if self._mutations:
+            types.append(self._introspection_type("Mutation"))
+        if self._subscriptions:
+            types.append(self._introspection_type("Subscription"))
+        return {
+            "queryType": {"name": "Query"},
+            "mutationType": {"name": "Mutation"} if self._mutations else None,
+            "subscriptionType": {"name": "Subscription"} if self._subscriptions else None,
+            "types": [item for item in types if item is not None],
+        }
 
     def add_query(self, func: Callable) -> None:
         """
@@ -793,6 +887,12 @@ class GraphQL:
 
         resolver_map = self._mutations if operation["type"] == "mutation" else self._queries
         result: Dict[str, Any] = {"data": {}}
+        if any(field["name"] in {"__schema", "__type"} for field in operation["selection"]):
+            if not self._introspection_enabled:
+                return {
+                    "data": None,
+                    "errors": [{"message": "Introspection is disabled"}],
+                }
         errors: List[Dict[str, Any]] = []
         info = {
             "query": query,
@@ -802,7 +902,30 @@ class GraphQL:
 
         for field in operation["selection"]:
             name = field["name"]
-            resolver = resolver_map.get(name)
+            if name == "__typename":
+                root_type = "Mutation" if operation["type"] == "mutation" else "Query"
+                result["data"][field["alias"]] = root_type
+                continue
+            if name == "__schema":
+                result["data"][field["alias"]] = await _project_graphql_value(
+                    self._introspection_schema(), field["selection"], info
+                )
+                continue
+            if name == "__type":
+                type_name = _resolve_graphql_value(
+                    field["arguments"].get("name"), variables or {}
+                )
+                result["data"][field["alias"]] = await _project_graphql_value(
+                    self._introspection_type(type_name) if type_name else None,
+                    field["selection"],
+                    info,
+                )
+                continue
+            resolver = None
+            for candidate in _resolver_candidates(name):
+                resolver = resolver_map.get(candidate)
+                if resolver is not None:
+                    break
             path = [field["alias"]]
             if resolver is None:
                 errors.append({"message": f"Cannot query field '{name}'", "path": path})
@@ -841,11 +964,17 @@ class GraphQL:
             raise ValueError("subscribe() requires a subscription operation")
         info = {"query": query, "variables": variables or {}, "operation_name": operation_name}
         for field in operation["selection"]:
-            resolver = self._subscriptions.get(field["name"])
+            resolver = None
+            for candidate in _resolver_candidates(field["name"]):
+                resolver = self._subscriptions.get(candidate)
+                if resolver is not None:
+                    break
             if resolver is None:
                 raise ValueError(f"Cannot subscribe to field '{field['name']}'")
             field_info = dict(info, field_name=field["name"], path=[field["alias"]])
-            arguments = _resolve_graphql_value(field["arguments"], info["variables"])
+            arguments = _normalize_argument_names(
+                _resolve_graphql_value(field["arguments"], info["variables"])
+            )
             stream = resolver(field_info, **arguments)
             if inspect.isawaitable(stream):
                 stream = await stream
@@ -901,7 +1030,8 @@ class GraphQL:
         return (
             f"<GraphQL queries={len(self._queries)} "
             f"mutations={len(self._mutations)} "
-            f"subscriptions={len(self._subscriptions)}>"
+            f"subscriptions={len(self._subscriptions)} "
+            f"introspection={self._introspection_enabled}>"
         )
 
 
@@ -936,11 +1066,16 @@ class Schema:
         result = await gql.execute('{ users { id } }')
     """
 
-    def __init__(self):
-        """Initialize an empty schema builder."""
-        self._queries: List[Any] = []
-        self._mutations: List[Any] = []
-        self._subscriptions: List[Any] = []
+    def __init__(
+        self,
+        queries: Optional[List[Any]] = None,
+        mutations: Optional[List[Any]] = None,
+        subscriptions: Optional[List[Any]] = None,
+    ):
+        """Initialize a schema builder with optional resolver collections."""
+        self._queries: List[Any] = list(queries or [])
+        self._mutations: List[Any] = list(mutations or [])
+        self._subscriptions: List[Any] = list(subscriptions or [])
 
     def query(self, type_class: Any) -> "Schema":
         """
@@ -1015,11 +1150,12 @@ class Schema:
             elif callable(item) and not isinstance(item, type):
                 gql.add_query(item)
             elif isinstance(item, type):
-                # Class-based: register each method as a query
-                for attr_name in dir(item):
+                # Class-based: register bound instance methods as queries.
+                instance = item()
+                for attr_name in dir(instance):
                     if attr_name.startswith("_"):
                         continue
-                    attr = getattr(item, attr_name)
+                    attr = getattr(instance, attr_name)
                     if callable(attr):
                         gql.add_query(attr)
 
@@ -1029,10 +1165,11 @@ class Schema:
             elif callable(item) and not isinstance(item, type):
                 gql.add_mutation(item)
             elif isinstance(item, type):
-                for attr_name in dir(item):
+                instance = item()
+                for attr_name in dir(instance):
                     if attr_name.startswith("_"):
                         continue
-                    attr = getattr(item, attr_name)
+                    attr = getattr(instance, attr_name)
                     if callable(attr):
                         gql.add_mutation(attr)
 
@@ -1042,10 +1179,11 @@ class Schema:
             elif callable(item) and not isinstance(item, type):
                 gql.add_subscription(item)
             elif isinstance(item, type):
-                for attr_name in dir(item):
+                instance = item()
+                for attr_name in dir(instance):
                     if attr_name.startswith("_"):
                         continue
-                    attr = getattr(item, attr_name)
+                    attr = getattr(instance, attr_name)
                     if callable(attr):
                         gql.add_subscription(attr)
 

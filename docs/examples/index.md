@@ -267,8 +267,7 @@ Ready to build real applications? These examples combine multiple Cello features
     **Features used:** `GraphQL` `schema` `resolvers` `DataLoader` `subscriptions`
 
     ```python
-    @app.mount("/graphql")
-    graphql_app = GraphQL(schema, context_value=get_context)
+    app.mount_graphql(schema)
     ```
 
     [:octicons-arrow-right-24: Full Example](advanced/graphql.md)

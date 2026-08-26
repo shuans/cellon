@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from cello import App, DatabaseConfig
+from cello import App, DatabaseConfig, EventSourcingConfig
+from cello.eventsourcing import Event, EventStore
 from cello.orm import AutoField, CharField, IntegerField, Model, setup
 
 
@@ -66,6 +67,44 @@ def test_sqlite_orm_crud_and_filters():
         await FileDbUser.objects.filter(name="Alice").delete()
         assert await FileDbUser.objects.count() == 1
         await app.database.close()
+
+    _run(main())
+
+
+def test_duckdb_event_store_persists_events_and_snapshots(tmp_path):
+    pytest.importorskip("duckdb")
+
+    async def main():
+        path = str(tmp_path / "events.duckdb")
+        config = EventSourcingConfig.duckdb(path)
+        first = await EventStore.connect(config)
+        first.config.snapshot_interval = 2
+        await first.append(
+            "order-1",
+            [
+                Event("OrderCreated", {"status": "created"}),
+                Event("OrderShipped", {"status": "shipped"}),
+            ],
+            expected_version=0,
+            snapshot_state={"status": "shipped"},
+        )
+        await first.close()
+
+        second = await EventStore.connect(config)
+        events = await second.get_events("order-1")
+        snapshot = await second.get_snapshot("order-1")
+        assert [event.version for event in events] == [1, 2]
+        assert snapshot is not None
+        assert snapshot.version == 2
+        assert snapshot.state == {"status": "shipped"}
+        with pytest.raises(ValueError, match="Concurrency conflict"):
+            await second.append(
+                "order-1",
+                [Event("Stale", {})],
+                expected_version=0,
+            )
+        assert len(await second.get_events("order-1")) == 2
+        await second.close()
 
     _run(main())
 

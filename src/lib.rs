@@ -2422,6 +2422,23 @@ impl PyEventSourcingConfig {
         Self::new("memory", 100, true, 10000, 0, None)
     }
 
+    /// Create a DuckDB-backed event sourcing configuration.
+    #[staticmethod]
+    #[pyo3(signature = (path))]
+    pub fn duckdb(path: &str) -> PyResult<Self> {
+        if path.trim().is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "DuckDB event sourcing requires a non-empty database path",
+            ));
+        }
+        let connection_url = if path.contains("://") {
+            path.to_string()
+        } else {
+            format!("duckdb://{path}")
+        };
+        Ok(Self::new("duckdb", 100, true, 10000, 0, Some(connection_url)))
+    }
+
     /// Create a PostgreSQL-backed event sourcing configuration.
     #[staticmethod]
     #[pyo3(signature = (url))]

@@ -72,54 +72,24 @@ async def create_user(request):
 
 ---
 
-## Using Kafka for Distributed Events
+## Using Redis Streams
 
-For microservices, use Kafka to deliver events between services.
-
-### Publisher Service
+The real external messaging adapters are explicit `Producer` and `Consumer` clients. `App.enable_messaging()` records Kafka compatibility configuration and does not open a broker connection.
 
 ```python
-from cello import App, KafkaConfig
+from cello import RedisConfig
+from cello.messaging import Consumer, Producer
 
-app = App()
-app.enable_messaging(KafkaConfig(
-    brokers=["localhost:9092"],
-    group_id="user-service",
-))
+producer = await Producer.connect(RedisConfig(url="redis://localhost:6379"))
+await producer.send("user.events", {"type": "UserCreated", "user_id": 1})
+await producer.close()
 
-@app.post("/users")
-async def create_user(request):
-    data = request.json()
-    user = save_user(data)
-
-    # Publish event to Kafka topic
-    await app.publish_message("user.events", {
-        "type": "UserCreated",
-        "user_id": user["id"],
-        "email": user["email"],
-        "timestamp": time.time(),
-    })
-
-    return user
-```
-
-### Subscriber Service
-
-```python
-from cello import App, KafkaConfig
-
-app = App()
-app.enable_messaging(KafkaConfig(
-    brokers=["localhost:9092"],
-    group_id="notification-service",
-))
-
-@app.on_message("user.events")
-async def handle_user_event(message):
-    if message["type"] == "UserCreated":
-        await send_welcome_email(message["email"])
-    elif message["type"] == "UserDeleted":
-        await cleanup_user_data(message["user_id"])
+consumer = await Consumer.connect(RedisConfig(url="redis://localhost:6379"))
+await consumer.subscribe(["user.events"])
+for message in await consumer.poll(timeout_ms=1000):
+    await handle_user_event(message.json())
+    await consumer.commit(message)
+await consumer.close()
 ```
 
 ---
@@ -127,25 +97,20 @@ async def handle_user_event(message):
 ## Using RabbitMQ
 
 ```python
-from cello import App, RabbitMQConfig
+from cello import RabbitMQConfig
+from cello.messaging import Consumer, Producer
 
-app = App()
-app.enable_rabbitmq(RabbitMQConfig(
-    url="amqp://localhost",
-    prefetch_count=20,
-))
+config = RabbitMQConfig(url="amqp://guest:guest@localhost:5672/", prefetch_count=20)
+producer = await Producer.connect(config)
+await producer.send("order.created", {"order_id": 1, "items": []})
+await producer.close()
 
-# Publish
-@app.post("/orders")
-async def create_order(request):
-    order = process_order(request.json())
-    await app.publish_message("order.created", order)
-    return order
-
-# Subscribe
-@app.on_message("order.created")
-async def handle_order_created(message):
-    await update_inventory(message["items"])
+consumer = await Consumer.connect(config)
+await consumer.subscribe(["order.created"])
+for message in await consumer.poll(timeout_ms=1000):
+    await update_inventory(message.json()["items"])
+    await consumer.commit(message)
+await consumer.close()
 ```
 
 ---
@@ -235,12 +200,16 @@ Adding a new subscriber (e.g., Analytics Service) does not require any changes t
 When a subscriber fails to process an event, route it to a dead letter queue (DLQ) for later inspection.
 
 ```python
-app.enable_messaging(KafkaConfig(
-    brokers=["localhost:9092"],
-    group_id="notification-service",
-    dead_letter_topic="dlq.notifications",
-    max_retries=3,
-))
+consumer = await Consumer.connect(RabbitMQConfig.local())
+await consumer.subscribe(["notifications"])
+for message in await consumer.poll(timeout_ms=1000):
+    try:
+        await process_notification(message.json())
+    except Exception:
+        # Route permanent failures to a separately managed DLQ queue.
+        await consumer.reject(message, requeue=False)
+    else:
+        await consumer.commit(message)
 ```
 
 ### Retry Strategies

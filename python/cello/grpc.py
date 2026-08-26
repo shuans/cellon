@@ -1,89 +1,42 @@
+"""Async gRPC integration backed by grpc.aio.
+
+The service API intentionally uses JSON serializers so a service can be exposed
+without generated protobuf code. The transport is real gRPC over HTTP/2, but the
+public decorator API is a JSON generic API and is not wire-compatible with
+protobuf-generated stubs.
 """
-Cello gRPC Integration.
 
-Provides Python-friendly wrappers for gRPC service definition, request/response
-handling, server management, and client channels with connection pooling.
-
-Example:
-    from cello import App
-    from cello.grpc import GrpcService, grpc_method, GrpcServer, GrpcChannel
-
-    class UserService(GrpcService):
-        @grpc_method
-        def get_user(self, request):
-            return {"id": request.data["id"], "name": "Alice"}
-
-        @grpc_method(stream=True)
-        def list_users(self, request):
-            yield {"id": 1, "name": "Alice"}
-            yield {"id": 2, "name": "Bob"}
-
-    server = GrpcServer()
-    server.register_service(UserService())
-
-    @app.on_event("startup")
-    async def setup():
-        await server.start("[::]:50051")
-
-    @app.on_event("shutdown")
-    async def teardown():
-        await server.stop()
-
-    # Client usage
-    async def call_user_service():
-        channel = await GrpcChannel.connect("localhost:50051")
-        result = await channel.call("UserService", "get_user", {"id": 1})
-        await channel.close()
-"""
+from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from functools import wraps
 from typing import Any, Callable, Optional
 
 
 class GrpcError(Exception):
-    """
-    Exception for gRPC errors with status codes.
+    """Exception for gRPC errors with standard status codes."""
 
-    Provides standard gRPC status codes as class attributes for convenience.
-
-    Example:
-        raise GrpcError(
-            code=GrpcError.NOT_FOUND,
-            message="User not found",
-            details="No user with id=42"
-        )
-    """
-
-    # Standard gRPC status codes
-    OK: int = 0
-    CANCELLED: int = 1
-    UNKNOWN: int = 2
-    INVALID_ARGUMENT: int = 3
-    DEADLINE_EXCEEDED: int = 4
-    NOT_FOUND: int = 5
-    ALREADY_EXISTS: int = 6
-    PERMISSION_DENIED: int = 7
-    RESOURCE_EXHAUSTED: int = 8
-    FAILED_PRECONDITION: int = 9
-    ABORTED: int = 10
-    OUT_OF_RANGE: int = 11
-    UNIMPLEMENTED: int = 12
-    INTERNAL: int = 13
-    UNAVAILABLE: int = 14
-    DATA_LOSS: int = 15
-    UNAUTHENTICATED: int = 16
+    OK = 0
+    CANCELLED = 1
+    UNKNOWN = 2
+    INVALID_ARGUMENT = 3
+    DEADLINE_EXCEEDED = 4
+    NOT_FOUND = 5
+    ALREADY_EXISTS = 6
+    PERMISSION_DENIED = 7
+    RESOURCE_EXHAUSTED = 8
+    FAILED_PRECONDITION = 9
+    ABORTED = 10
+    OUT_OF_RANGE = 11
+    UNIMPLEMENTED = 12
+    INTERNAL = 13
+    UNAVAILABLE = 14
+    DATA_LOSS = 15
+    UNAUTHENTICATED = 16
 
     def __init__(self, code: int, message: str, details: str = None):
-        """
-        Initialize a gRPC error.
-
-        Args:
-            code: gRPC status code (use class attributes like GrpcError.NOT_FOUND).
-            message: Human-readable error message.
-            details: Optional additional error details.
-        """
         self.code = code
         self.message = message
         self.details = details
@@ -94,63 +47,23 @@ class GrpcError(Exception):
 
 
 def grpc_method(func: Callable = None, *, stream: bool = False) -> Callable:
-    """
-    Decorator to mark a method as a gRPC endpoint.
+    """Mark a service method as a unary or server-streaming RPC."""
 
-    Stores metadata on the function including the method name and whether
-    it uses streaming. Can be used with or without arguments.
-
-    Args:
-        func: The method to decorate (when used without parentheses).
-        stream: Whether this method uses streaming responses (default: False).
-
-    Returns:
-        Decorated function with gRPC metadata attached.
-
-    Example:
-        class MyService(GrpcService):
-            @grpc_method
-            def unary_call(self, request):
-                return {"result": "ok"}
-
-            @grpc_method(stream=True)
-            def streaming_call(self, request):
-                yield {"chunk": 1}
-                yield {"chunk": 2}
-    """
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
             return fn(*args, **kwargs)
 
-        # Attach gRPC metadata to the function
         wrapper._grpc_method = True
         wrapper._grpc_method_name = fn.__name__
         wrapper._grpc_stream = stream
         return wrapper
 
-    if func is not None:
-        # Called without parentheses: @grpc_method
-        return decorator(func)
-    # Called with parentheses: @grpc_method(stream=True)
-    return decorator
+    return decorator(func) if func is not None else decorator
 
 
 class GrpcRequest:
-    """
-    Represents an incoming gRPC request.
-
-    Encapsulates the target service, method, payload data, and any
-    additional metadata (headers) sent by the client.
-
-    Example:
-        request = GrpcRequest(
-            service="UserService",
-            method="get_user",
-            data={"id": 42},
-            metadata={"authorization": "Bearer token123"}
-        )
-    """
+    """Incoming request metadata and decoded JSON payload."""
 
     def __init__(
         self,
@@ -159,15 +72,6 @@ class GrpcRequest:
         data: dict = None,
         metadata: dict = None,
     ):
-        """
-        Initialize a gRPC request.
-
-        Args:
-            service: Target service name.
-            method: Target method name.
-            data: Request payload as a dictionary.
-            metadata: Optional request metadata (headers).
-        """
         self._service = service
         self._method = method
         self._data = data or {}
@@ -175,39 +79,33 @@ class GrpcRequest:
 
     @property
     def service(self) -> str:
-        """Get the target service name."""
         return self._service
 
     @property
     def method(self) -> str:
-        """Get the target method name."""
         return self._method
 
     @property
     def data(self) -> dict:
-        """Get the request payload data."""
         return self._data
 
     @property
     def metadata(self) -> dict:
-        """Get the request metadata."""
         return self._metadata
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Read a payload field using dictionary-style convenience syntax."""
+        return self._data.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
 
     def __repr__(self) -> str:
         return f"GrpcRequest(service={self._service!r}, method={self._method!r})"
 
 
 class GrpcResponse:
-    """
-    Represents a gRPC response.
-
-    Contains the response payload, a status code, a human-readable
-    message, and optional response metadata.
-
-    Example:
-        response = GrpcResponse.ok({"id": 1, "name": "Alice"})
-        error_response = GrpcResponse.error(5, "User not found")
-    """
+    """Outgoing gRPC response with a JSON-compatible payload."""
 
     def __init__(
         self,
@@ -216,111 +114,48 @@ class GrpcResponse:
         message: str = "OK",
         metadata: dict = None,
     ):
-        """
-        Initialize a gRPC response.
-
-        Args:
-            data: Response payload as a dictionary.
-            status_code: gRPC status code (0 = OK).
-            message: Human-readable status message.
-        """
         self._data = data or {}
         self._status_code = status_code
         self._message = message
-        self._metadata: dict = metadata or {}
+        self._metadata = metadata or {}
 
     @property
     def data(self) -> dict:
-        """Get the response payload data."""
         return self._data
 
     @property
     def status_code(self) -> int:
-        """Get the gRPC status code."""
         return self._status_code
 
     @property
     def message(self) -> str:
-        """Get the status message."""
         return self._message
 
     @property
     def metadata(self) -> dict:
-        """Get the response metadata."""
         return self._metadata
 
     @classmethod
     def ok(cls, data: dict) -> "GrpcResponse":
-        """
-        Create a successful gRPC response.
-
-        Args:
-            data: Response payload.
-
-        Returns:
-            GrpcResponse with status OK (0).
-        """
-        return cls(data=data, status_code=0, message="OK")
+        return cls(data=data, status_code=GrpcError.OK, message="OK")
 
     @classmethod
     def error(cls, code: int, message: str) -> "GrpcResponse":
-        """
-        Create an error gRPC response.
-
-        Args:
-            code: gRPC status code.
-            message: Error message.
-
-        Returns:
-            GrpcResponse with the specified error code.
-        """
         return cls(data=None, status_code=code, message=message)
 
     def __repr__(self) -> str:
-        return (
-            f"GrpcResponse(status_code={self._status_code}, "
-            f"message={self._message!r})"
-        )
+        return f"GrpcResponse(status_code={self._status_code}, message={self._message!r})"
 
 
 class GrpcService:
-    """
-    Base class for defining gRPC services.
-
-    Subclass this and decorate methods with @grpc_method to register
-    them as gRPC endpoints. The service name is auto-extracted from the
-    class name if not provided explicitly.
-
-    Example:
-        class UserService(GrpcService):
-            @grpc_method
-            def get_user(self, request):
-                user_id = request.data["id"]
-                return {"id": user_id, "name": "Alice"}
-
-            @grpc_method(stream=True)
-            def list_users(self, request):
-                yield {"id": 1, "name": "Alice"}
-                yield {"id": 2, "name": "Bob"}
-
-        service = UserService()
-        print(service.get_name())       # "UserService"
-        print(service.get_methods())    # [{"name": "get_user", ...}, ...]
-    """
+    """Base class for class-based gRPC services."""
 
     def __init__(self, name: str = None):
-        """
-        Initialize the gRPC service.
-
-        Args:
-            name: Service name. If None, auto-extracted from the class name.
-        """
-        self._name = name or self.__class__.__name__
-        self._methods: dict = {}
+        self._name = name or getattr(self.__class__, "service_name", None) or self.__class__.__name__
+        self._methods: dict[str, dict[str, Any]] = {}
         self._discover_methods()
 
     def _discover_methods(self) -> None:
-        """Scan the class for methods decorated with @grpc_method."""
         for attr_name in dir(self):
             if attr_name.startswith("_"):
                 continue
@@ -329,130 +164,251 @@ class GrpcService:
                 self._methods[attr._grpc_method_name] = {
                     "name": attr._grpc_method_name,
                     "handler": attr,
-                    "stream": attr._grpc_stream,
+                    "stream": bool(attr._grpc_stream),
                 }
 
     def get_methods(self) -> list[dict]:
-        """
-        Return metadata for all registered gRPC methods.
-
-        Returns:
-            List of dicts with keys: name, stream.
-        """
         return [
             {"name": info["name"], "stream": info["stream"]}
             for info in self._methods.values()
         ]
 
     def get_name(self) -> str:
-        """
-        Get the service name.
-
-        Returns:
-            The service name string.
-        """
         return self._name
 
     def __repr__(self) -> str:
-        method_count = len(self._methods)
-        return f"GrpcService(name={self._name!r}, methods={method_count})"
+        return f"GrpcService(name={self._name!r}, methods={len(self._methods)})"
+
+
+_STATUS_NAMES = {
+    GrpcError.CANCELLED: "CANCELLED",
+    GrpcError.UNKNOWN: "UNKNOWN",
+    GrpcError.INVALID_ARGUMENT: "INVALID_ARGUMENT",
+    GrpcError.DEADLINE_EXCEEDED: "DEADLINE_EXCEEDED",
+    GrpcError.NOT_FOUND: "NOT_FOUND",
+    GrpcError.ALREADY_EXISTS: "ALREADY_EXISTS",
+    GrpcError.PERMISSION_DENIED: "PERMISSION_DENIED",
+    GrpcError.RESOURCE_EXHAUSTED: "RESOURCE_EXHAUSTED",
+    GrpcError.FAILED_PRECONDITION: "FAILED_PRECONDITION",
+    GrpcError.ABORTED: "ABORTED",
+    GrpcError.OUT_OF_RANGE: "OUT_OF_RANGE",
+    GrpcError.UNIMPLEMENTED: "UNIMPLEMENTED",
+    GrpcError.INTERNAL: "INTERNAL",
+    GrpcError.UNAVAILABLE: "UNAVAILABLE",
+    GrpcError.DATA_LOSS: "DATA_LOSS",
+    GrpcError.UNAUTHENTICATED: "UNAUTHENTICATED",
+}
+
+
+def _json_loads(payload: bytes) -> dict:
+    if not payload:
+        return {}
+    value = json.loads(payload.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("gRPC JSON request must be an object")
+    return value
+
+
+def _json_dumps(value: Any) -> bytes:
+    if isinstance(value, GrpcResponse):
+        value = value.data
+    return json.dumps(value if value is not None else {}, separators=(",", ":")).encode("utf-8")
+
+
+def _metadata_dict(context) -> dict:
+    return {key: value for key, value in context.invocation_metadata()}
 
 
 class GrpcServer:
-    """
-    gRPC server that hosts registered services.
+    """Real asyncio gRPC server using generic JSON-serialized handlers.
 
-    Wraps the Rust-powered gRPC server with a Pythonic API for
-    service registration, startup, and shutdown.
-
-    Example:
-        server = GrpcServer()
-        server.register_service(UserService())
-        server.register_service(OrderService())
-
-        # In an async context
-        await server.start("[::]:50051")
-
-        # Graceful shutdown
-        await server.stop()
+    This is a standard gRPC HTTP/2 transport with JSON payload serialization;
+    protobuf code generation is intentionally outside this convenience API.
     """
 
     def __init__(self, config: Any = None, host: str = None, port: int = None):
-        """Initialize the gRPC server.
-
-        ``host`` and ``port`` are accepted for the documented convenience API;
-        an explicit address passed to ``start()`` still takes precedence.
-        """
         self._config = config
         self._services: dict[str, GrpcService] = {}
         self._running = False
-        self._address = None
+        self._address: Optional[str] = None
+        self._server = None
+        self._grpc = None
+        self._active_calls = 0
         if host is not None or port is not None:
-            self._address = f"{host or '127.0.0.1'}:{port or 50051}"
+            resolved_host = host or "127.0.0.1"
+            resolved_port = 50051 if port is None else port
+            self._address = f"{resolved_host}:{resolved_port}"
+        elif config is not None and getattr(config, "address", None):
+            self._address = config.address
 
     def register_service(self, service: GrpcService) -> None:
-        """
-        Register a gRPC service with the server.
-
-        Args:
-            service: A GrpcService subclass instance.
-
-        Raises:
-            TypeError: If the provided object is not a GrpcService instance.
-            ValueError: If a service with the same name is already registered.
-        """
         if not isinstance(service, GrpcService):
-            raise TypeError(
-                f"Expected GrpcService instance, got {type(service).__name__}"
-            )
+            raise TypeError(f"Expected GrpcService instance, got {type(service).__name__}")
         name = service.get_name()
         if name in self._services:
             raise ValueError(f"Service '{name}' is already registered")
+        if self._running:
+            raise RuntimeError("Services must be registered before the gRPC server starts")
         self._services[name] = service
 
     def get_services(self) -> list[str]:
-        """
-        Get the names of all registered services.
-
-        Returns:
-            List of registered service name strings.
-        """
         return list(self._services.keys())
 
-    async def start(self, address: str = "[::]:50051") -> None:
-        """
-        Start the gRPC server on the given address.
+    async def _invoke(self, service_name: str, method_name: str, payload: dict, context):
+        service = self._services.get(service_name)
+        if service is None:
+            await context.abort(
+                self._grpc.StatusCode.NOT_FOUND,
+                f"Service '{service_name}' was not found",
+            )
+            return None
+        method_info = service._methods.get(method_name)
+        if method_info is None:
+            await context.abort(
+                self._grpc.StatusCode.UNIMPLEMENTED,
+                f"Method '{method_name}' was not found",
+            )
+            return None
 
-        Args:
-            address: Bind address in host:port format (default: "[::]:50051").
+        request = GrpcRequest(service_name, method_name, payload, _metadata_dict(context))
+        self._active_calls += 1
+        call_error = None
+        try:
+            value = method_info["handler"](request)
+            if inspect.isawaitable(value):
+                value = await value
+        except GrpcError as exc:
+            call_error = (
+                getattr(self._grpc.StatusCode, _STATUS_NAMES.get(exc.code, "UNKNOWN")),
+                exc.message,
+            )
+            value = None
+        except Exception as exc:
+            call_error = (self._grpc.StatusCode.INTERNAL, str(exc))
+            value = None
+        finally:
+            self._active_calls -= 1
 
-        Raises:
-            RuntimeError: If the server is already running.
-        """
+        # Keep context.abort outside the invocation exception handlers.  The
+        # aio runtime raises from abort to terminate the RPC, and that control
+        # flow must never be wrapped as a second INTERNAL error.
+        if call_error is not None:
+            await context.abort(*call_error)
+            return None
+
+        if isinstance(value, GrpcResponse):
+            if value.metadata:
+                await context.send_initial_metadata(tuple(value.metadata.items()))
+            if value.status_code != GrpcError.OK:
+                status = getattr(self._grpc.StatusCode, _STATUS_NAMES.get(value.status_code, "UNKNOWN"))
+                await context.abort(status, value.message)
+            return value.data
+        return value
+
+    def _build_handlers(self):
+        handlers = {}
+        for service_name, service in self._services.items():
+            method_handlers = {}
+            for method_name, method_info in service._methods.items():
+                path_service = service_name
+                if method_info["stream"]:
+                    async def stream_handler(request, context, _service=path_service, _method=method_name):
+                        try:
+                            payload = _json_loads(request)
+                        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                            await context.abort(self._grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+                            return
+                        value = await self._invoke(_service, _method, payload, context)
+                        if hasattr(value, "__aiter__"):
+                            async for item in value:
+                                yield item.data if isinstance(item, GrpcResponse) else item
+                        elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes, dict)):
+                            for item in value:
+                                yield item.data if isinstance(item, GrpcResponse) else item
+                        elif value is not None:
+                            yield value
+
+                    method_handlers[method_name] = self._grpc.unary_stream_rpc_method_handler(
+                        stream_handler,
+                        request_deserializer=lambda data: data,
+                        response_serializer=_json_dumps,
+                    )
+                else:
+                    async def unary_handler(request, context, _service=path_service, _method=method_name):
+                        try:
+                            payload = _json_loads(request)
+                        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                            await context.abort(self._grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+                            return None
+                        return await self._invoke(_service, _method, payload, context)
+
+                    method_handlers[method_name] = self._grpc.unary_unary_rpc_method_handler(
+                        unary_handler,
+                        request_deserializer=lambda data: data,
+                        response_serializer=_json_dumps,
+                    )
+            handlers[service_name] = self._grpc.method_handlers_generic_handler(service_name, method_handlers)
+        return handlers
+
+    async def start(self, address: str = None) -> None:
         if self._running:
             raise RuntimeError("gRPC server is already running")
-        if not isinstance(address, str) or not address.strip():
-            raise ValueError("gRPC address must be a non-empty host:port string")
-        _register_grpc_server(address, self)
-        self._address = address
+        if address is not None:
+            self._address = address
+        if not self._address:
+            self._address = "[::]:50051"
+        try:
+            import grpc
+        except ImportError as exc:
+            raise RuntimeError("gRPC support requires the 'grpcio' package") from exc
+
+        self._grpc = grpc
+        options = []
+        max_message_size = getattr(self._config, "max_message_size", None)
+        if max_message_size:
+            options.extend([
+                ("grpc.max_receive_message_length", int(max_message_size)),
+                ("grpc.max_send_message_length", int(max_message_size)),
+            ])
+        keepalive_secs = getattr(self._config, "keepalive_secs", None)
+        if keepalive_secs:
+            options.append(("grpc.keepalive_time_ms", int(keepalive_secs) * 1000))
+        concurrency_limit = getattr(self._config, "concurrency_limit", None)
+        if concurrency_limit:
+            options.append(("grpc.max_concurrent_streams", int(concurrency_limit)))
+        self._server = grpc.aio.server(options=options)
+        for handler in self._build_handlers().values():
+            self._server.add_generic_rpc_handlers((handler,))
+
+        requested_address = self._address
+        bound_port = self._server.add_insecure_port(requested_address)
+        if bound_port == 0:
+            self._server = None
+            raise OSError(f"Could not bind gRPC address '{self._address}'")
+        await self._server.start()
+        if requested_address.rsplit(":", 1)[-1] == "0":
+            host = requested_address.rsplit(":", 1)[0]
+            self._address = f"{host}:{bound_port}"
         self._running = True
 
-    async def stop(self) -> None:
-        """
-        Gracefully stop the gRPC server.
+    @property
+    def address(self) -> Optional[str]:
+        """The bound address, including the resolved port after startup."""
+        return self._address
 
-        Waits for in-flight requests to complete before shutting down.
-        """
-        if self._running:
-            self._running = False
-            _unregister_grpc_server(self._address, self)
+    async def stop(self, grace: float = 5.0) -> None:
+        if self._server is not None:
+            await self._server.stop(grace)
+        self._server = None
+        self._running = False
 
-    def __repr__(self) -> str:
-        service_count = len(self._services)
-        return f"GrpcServer(services={service_count}, running={self._running})"
+    async def wait_for_termination(self) -> None:
+        if self._server is None:
+            raise GrpcError(GrpcError.UNAVAILABLE, "gRPC server is not running")
+        await self._server.wait_for_termination()
 
     async def dispatch(self, service: str, method: str, request: GrpcRequest) -> Any:
-        """Dispatch a request to a registered service method."""
+        """Dispatch directly for application code and unit tests."""
         if not self._running:
             raise GrpcError(GrpcError.UNAVAILABLE, "gRPC server is not running")
         target = self._services.get(service)
@@ -461,140 +417,123 @@ class GrpcServer:
         method_info = target._methods.get(method)
         if method_info is None:
             raise GrpcError(GrpcError.UNIMPLEMENTED, f"Method '{method}' was not found")
-        try:
-            value = method_info["handler"](request)
-            if inspect.isawaitable(value):
-                value = await value
-            if isinstance(value, GrpcResponse) and value.status_code != GrpcError.OK:
-                raise GrpcError(value.status_code, value.message)
-            return value
-        except GrpcError:
-            raise
-        except Exception as exc:
-            raise GrpcError(GrpcError.INTERNAL, str(exc)) from exc
+        value = method_info["handler"](request)
+        if inspect.isawaitable(value):
+            value = await value
+        if isinstance(value, GrpcResponse) and value.status_code != GrpcError.OK:
+            raise GrpcError(value.status_code, value.message)
+        return value.data if isinstance(value, GrpcResponse) else value
 
-
-_GRPC_SERVERS = {}
-
-
-def _register_grpc_server(address: str, server: GrpcServer) -> None:
-    if address in _GRPC_SERVERS:
-        raise RuntimeError(f"gRPC address '{address}' is already in use")
-    _GRPC_SERVERS[address] = server
-
-
-def _unregister_grpc_server(address: str, server: GrpcServer) -> None:
-    if _GRPC_SERVERS.get(address) is server:
-        del _GRPC_SERVERS[address]
-
-
-def _lookup_grpc_server(target: str) -> GrpcServer:
-    server = _GRPC_SERVERS.get(target)
-    if server is None:
-        raise GrpcError(GrpcError.UNAVAILABLE, f"No gRPC server is listening at '{target}'")
-    return server
+    def __repr__(self) -> str:
+        return f"GrpcServer(services={len(self._services)}, running={self._running})"
 
 
 class GrpcChannel:
-    """
-    gRPC client channel for making remote procedure calls.
-
-    Wraps the Rust-powered gRPC client with a Pythonic async API
-    for connecting to remote services and making calls.
-
-    Example:
-        channel = await GrpcChannel.connect("localhost:50051")
-
-        result = await channel.call(
-            "UserService",
-            "get_user",
-            {"id": 42}
-        )
-        print(result)  # {"id": 42, "name": "Alice"}
-
-        await channel.close()
-    """
+    """Real asyncio gRPC client channel for JSON generic RPC calls."""
 
     def __init__(self, target: str):
-        """
-        Initialize a gRPC channel.
-
-        Use the async classmethod `connect()` instead of constructing directly.
-
-        Args:
-            target: Target address in host:port format.
-        """
         self._target = target
         self._connected = False
-        self._server = None
+        self._channel = None
+        self._grpc = None
 
     @classmethod
     async def connect(cls, target: str) -> "GrpcChannel":
-        """
-        Create and connect a gRPC channel to the target address.
-
-        Args:
-            target: Target address in host:port format (e.g., "localhost:50051").
-
-        Returns:
-            A connected GrpcChannel instance.
-        """
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError("gRPC target must be a non-empty host:port string")
+        try:
+            import grpc
+        except ImportError as exc:
+            raise RuntimeError("gRPC support requires the 'grpcio' package") from exc
         instance = cls(target)
-        instance._server = _lookup_grpc_server(target)
+        instance._grpc = grpc
+        instance._channel = grpc.aio.insecure_channel(target)
+        try:
+            await asyncio_wait_for_channel_ready(instance._channel)
+        except Exception:
+            await instance._channel.close()
+            raise
         instance._connected = True
         return instance
 
-    async def stream(self, service: str, method: str, request: dict):
-        """Yield responses from a streaming RPC."""
-        if not self._connected:
+    async def call(
+        self,
+        service: str,
+        method: str,
+        request: dict,
+        metadata: dict = None,
+        timeout: float = None,
+    ) -> dict:
+        if not self._connected or self._channel is None:
             raise GrpcError(GrpcError.UNAVAILABLE, "Channel is not connected")
         if not isinstance(request, dict):
             raise TypeError("gRPC request must be a dictionary")
-        grpc_request = GrpcRequest(service, method, request)
-        value = await self._server.dispatch(service, method, grpc_request)
-        if hasattr(value, "__aiter__"):
-            async for item in value:
-                yield item
-        elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes, dict)):
-            for item in value:
-                yield item
-        else:
-            yield value
+        rpc = self._channel.unary_unary(
+            f"/{service}/{method}",
+            request_serializer=_json_dumps,
+            response_deserializer=_json_loads,
+        )
+        try:
+            return await rpc(request, metadata=tuple((metadata or {}).items()), timeout=timeout)
+        except self._grpc.aio.AioRpcError as exc:
+            raise GrpcError(_status_code(exc.code()), exc.details() or str(exc)) from exc
 
-    async def call(self, service: str, method: str, request: dict) -> dict:
-        """
-        Make a unary gRPC call to a remote service method.
-
-        Args:
-            service: Target service name.
-            method: Target method name.
-            request: Request payload as a dictionary.
-
-        Returns:
-            Response payload as a dictionary.
-
-        Raises:
-            GrpcError: If the call fails or the channel is not connected.
-        """
-        if not self._connected:
-            raise GrpcError(
-                code=GrpcError.UNAVAILABLE,
-                message="Channel is not connected",
-                details=f"Target: {self._target}",
-            )
+    async def stream(
+        self,
+        service: str,
+        method: str,
+        request: dict,
+        metadata: dict = None,
+        timeout: float = None,
+    ):
+        if not self._connected or self._channel is None:
+            raise GrpcError(GrpcError.UNAVAILABLE, "Channel is not connected")
         if not isinstance(request, dict):
             raise TypeError("gRPC request must be a dictionary")
-        grpc_request = GrpcRequest(service, method, request)
-        return await self._server.dispatch(service, method, grpc_request)
+        rpc = self._channel.unary_stream(
+            f"/{service}/{method}",
+            request_serializer=_json_dumps,
+            response_deserializer=_json_loads,
+        )
+        try:
+            call = rpc(request, metadata=tuple((metadata or {}).items()), timeout=timeout)
+            async for item in call:
+                yield item
+        except self._grpc.aio.AioRpcError as exc:
+            raise GrpcError(_status_code(exc.code()), exc.details() or str(exc)) from exc
 
     async def close(self) -> None:
-        """
-        Close the gRPC channel and release resources.
-        """
+        if self._channel is not None:
+            await self._channel.close()
+        self._channel = None
         self._connected = False
 
     def __repr__(self) -> str:
-        return (
-            f"GrpcChannel(target={self._target!r}, "
-            f"connected={self._connected})"
-        )
+        return f"GrpcChannel(target={self._target!r}, connected={self._connected})"
+
+
+async def asyncio_wait_for_channel_ready(channel, timeout: float = 5.0) -> None:
+    """Wait for a channel to connect without relying on deprecated loop APIs."""
+    await asyncio.wait_for(channel.channel_ready(), timeout=timeout)
+
+
+def _status_code(status) -> int:
+    name = getattr(status, "name", "UNKNOWN")
+    return {
+        "CANCELLED": GrpcError.CANCELLED,
+        "UNKNOWN": GrpcError.UNKNOWN,
+        "INVALID_ARGUMENT": GrpcError.INVALID_ARGUMENT,
+        "DEADLINE_EXCEEDED": GrpcError.DEADLINE_EXCEEDED,
+        "NOT_FOUND": GrpcError.NOT_FOUND,
+        "ALREADY_EXISTS": GrpcError.ALREADY_EXISTS,
+        "PERMISSION_DENIED": GrpcError.PERMISSION_DENIED,
+        "RESOURCE_EXHAUSTED": GrpcError.RESOURCE_EXHAUSTED,
+        "FAILED_PRECONDITION": GrpcError.FAILED_PRECONDITION,
+        "ABORTED": GrpcError.ABORTED,
+        "OUT_OF_RANGE": GrpcError.OUT_OF_RANGE,
+        "UNIMPLEMENTED": GrpcError.UNIMPLEMENTED,
+        "INTERNAL": GrpcError.INTERNAL,
+        "UNAVAILABLE": GrpcError.UNAVAILABLE,
+        "DATA_LOSS": GrpcError.DATA_LOSS,
+        "UNAUTHENTICATED": GrpcError.UNAUTHENTICATED,
+    }.get(name, GrpcError.UNKNOWN)

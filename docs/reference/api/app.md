@@ -542,8 +542,9 @@ from cello import App, GrpcConfig
 app = App()
 app.enable_grpc(GrpcConfig(
     address="[::]:50051",
-    reflection=True,
-    enable_web=True
+    max_message_size=4_194_304,
+    keepalive_secs=60,
+    concurrency_limit=100,
 ))
 ```
 
@@ -555,7 +556,7 @@ When `config` is `None`, defaults from `GrpcConfig()` are used.
 
 ### `app.add_grpc_service(name, methods)`
 
-Register a gRPC service with the application.
+Register a gRPC service with the application. A `GrpcService` instance is served by the real `grpc.aio` transport; the legacy `name, methods` form only records native metadata.
 
 > *Since v0.9.0*
 
@@ -576,7 +577,7 @@ app.add_grpc_service("OrderService", ["CreateOrder", "GetOrder"])
 
 ### `app.enable_messaging(config)`
 
-Enable Kafka message queue integration.
+Record Kafka configuration for the compatibility decorator API. External Kafka connections are not created by this App method; use a dedicated Kafka client when available.
 
 > *Since v0.9.0*
 
@@ -598,7 +599,7 @@ When `config` is `None`, defaults from `KafkaConfig()` are used.
 
 ### `app.enable_rabbitmq(config)`
 
-Enable RabbitMQ message queue integration.
+Record RabbitMQ configuration. Use `cello.messaging.Producer` and `Consumer` to open the real AMQP connection.
 
 > *Since v0.9.0*
 
@@ -620,7 +621,7 @@ When `config` is `None`, defaults from `RabbitMQConfig()` are used.
 
 ### `app.enable_sqs(config)`
 
-Enable AWS SQS message queue integration.
+Record SQS configuration. The external SQS producer/consumer client is not included in the current Python adapter.
 
 > *Since v0.9.0*
 
@@ -650,24 +651,29 @@ Enable event sourcing support.
 
 > *Since v0.10.0*
 
-Configures the event sourcing subsystem with storage backend, snapshot support, and event retention settings. Returns the `App` instance for method chaining.
+Configures the event sourcing subsystem and exposes the connected store as `app.event_store` and `app.state.event_store` after startup. The current persistent backend is DuckDB; the default backend is in-memory.
 
 ```python
 from cello import App, EventSourcingConfig
+from cello.eventsourcing import Event
 
 app = App()
-app.enable_event_sourcing(EventSourcingConfig(
-    store_type="postgresql",
-    snapshot_interval=100,
-    enable_snapshots=True
-))
+app.enable_event_sourcing(EventSourcingConfig.duckdb("./data/events.duckdb"))
+
+# The store is opened by the startup lifecycle hook.
+@app.get("/events/{aggregate_id}")
+async def get_events(request):
+    events = await app.event_store.get_events(request.params["aggregate_id"])
+    return {"events": [event.json() for event in events]}
 ```
+
+For direct use outside an `App`, import `EventStore` from `cello.eventsourcing` and call `await EventStore.connect(EventSourcingConfig.duckdb(path))`. Events and snapshots are stored in `cello_events` and `cello_snapshots` tables and survive reconnects.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `config` | `EventSourcingConfig` | `EventSourcingConfig()` | Event sourcing configuration instance |
+| `config` | `EventSourcingConfig` | `EventSourcingConfig()` | Event sourcing configuration instance. Use `EventSourcingConfig.duckdb(path)` for persistence. |
 
-When `config` is `None`, defaults from `EventSourcingConfig()` are used.
+When `config` is `None`, an in-memory store is opened at application startup. `EventStore.append(aggregate_id, events, expected_version=...)` provides optimistic concurrency checks; pass `snapshot_state=` when an exact aggregate snapshot should be created at the configured interval. PostgreSQL remains configuration-only.
 
 ### `app.enable_cqrs(config)`
 

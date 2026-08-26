@@ -3081,14 +3081,16 @@ def test_grpc_server_register_duplicate_error():
 
 @pytest.mark.asyncio
 async def test_grpc_server_start_stop():
-    """Test GrpcServer start and stop lifecycle."""
+    """Test the real grpc.aio server lifecycle."""
+    pytest.importorskip("grpc")
     from cello.grpc import GrpcServer
 
     server = GrpcServer()
     assert server._running is False
 
-    await server.start("[::]:50051")
+    await server.start("127.0.0.1:0")
     assert server._running is True
+    assert server.address.rsplit(":", 1)[-1] != "0"
 
     await server.stop()
     assert server._running is False
@@ -3097,10 +3099,11 @@ async def test_grpc_server_start_stop():
 @pytest.mark.asyncio
 async def test_grpc_server_start_already_running():
     """Test GrpcServer raises RuntimeError if started while running."""
+    pytest.importorskip("grpc")
     from cello.grpc import GrpcServer
 
     server = GrpcServer()
-    await server.start()
+    await server.start("127.0.0.1:0")
     with pytest.raises(RuntimeError, match="already running"):
         await server.start()
     await server.stop()
@@ -3118,23 +3121,38 @@ def test_grpc_server_repr():
 
 @pytest.mark.asyncio
 async def test_grpc_channel_connect():
-    """Test GrpcChannel.connect() creates connected channel."""
-    from cello.grpc import GrpcChannel
+    """Test GrpcChannel.connect() against a real grpc.aio server."""
+    pytest.importorskip("grpc")
+    from cello.grpc import GrpcChannel, GrpcServer
 
-    channel = await GrpcChannel.connect("localhost:50051")
-    assert channel is not None
+    server = GrpcServer()
+    await server.start("127.0.0.1:0")
+    channel = await GrpcChannel.connect(server.address)
     assert channel._connected is True
-    assert channel._target == "localhost:50051"
+    assert channel._target == server.address
+    await channel.close()
+    await server.stop()
 
 
 @pytest.mark.asyncio
 async def test_grpc_channel_call():
-    """Test GrpcChannel.call() returns a dict."""
-    from cello.grpc import GrpcChannel
+    """Test a real network unary call with JSON serialization."""
+    pytest.importorskip("grpc")
+    from cello.grpc import GrpcChannel, GrpcServer, GrpcService, grpc_method
 
-    channel = await GrpcChannel.connect("localhost:50051")
+    class UserService(GrpcService):
+        @grpc_method
+        async def GetUser(self, request):
+            return {"id": request.data["id"], "name": "Alice"}
+
+    server = GrpcServer()
+    server.register_service(UserService())
+    await server.start("127.0.0.1:0")
+    channel = await GrpcChannel.connect(server.address)
     result = await channel.call("UserService", "GetUser", {"id": 1})
-    assert isinstance(result, dict)
+    assert result == {"id": 1, "name": "Alice"}
+    await channel.close()
+    await server.stop()
 
 
 @pytest.mark.asyncio
@@ -3152,12 +3170,16 @@ async def test_grpc_channel_call_disconnected():
 @pytest.mark.asyncio
 async def test_grpc_channel_close():
     """Test GrpcChannel.close() disconnects."""
-    from cello.grpc import GrpcChannel
+    pytest.importorskip("grpc")
+    from cello.grpc import GrpcChannel, GrpcServer
 
-    channel = await GrpcChannel.connect("localhost:50051")
+    server = GrpcServer()
+    await server.start("127.0.0.1:0")
+    channel = await GrpcChannel.connect(server.address)
     assert channel._connected is True
     await channel.close()
     assert channel._connected is False
+    await server.stop()
 
 
 def test_grpc_channel_repr():

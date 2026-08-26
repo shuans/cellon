@@ -6,21 +6,18 @@ Cellon is built and published by GitHub Actions. No local Rust, wheel, or source
 
 1. A GitHub repository containing this project.
 2. A PyPI project named `cellon` or permission to create it.
-3. A GitHub environment named `pypi`.
-4. A PyPI Trusted Publisher configured for the repository and workflow.
+3. A GitHub environment named `pypi` (recommended for protecting production releases).
+4. A PyPI API token stored as the GitHub Actions secret `PYPI_API_TOKEN`.
+5. Optionally, a Test PyPI API token stored as `TEST_PYPI_API_TOKEN`.
 
-## PyPI Trusted Publishing
+## PyPI API Token
 
-Configure the publisher at PyPI under **Publishing** with:
+Create a project-scoped API token in PyPI and add it to the repository or `pypi`
+environment as the secret `PYPI_API_TOKEN`. The publish workflow authenticates
+with username `__token__` and this secret; the token value is never committed.
 
-- Owner: the GitHub organization or user that owns the repository
-- Repository: the repository name
-- Workflow name: `.github/workflows/publish.yml`
-- Environment: `pypi`
-
-For Test PyPI, configure a second publisher with the same repository and workflow, using the environment selected by your Test PyPI policy.
-
-The workflow requests the `id-token: write` permission and uses `pypa/gh-action-pypi-publish`; no `PYPI_API_TOKEN` secret is needed.
+For Test PyPI, create a separate token at Test PyPI and store it as
+`TEST_PYPI_API_TOKEN`. Do not reuse the production token.
 
 ## Production Release
 
@@ -62,9 +59,11 @@ The native extension keeps the `cello._cello` module name for compatibility with
 
 ## Troubleshooting
 
-### Trusted publishing fails
+### API token authentication fails
 
-Check that the PyPI publisher exactly matches the GitHub owner, repository, workflow path, and `pypi` environment. Also verify that the job has `id-token: write` permission.
+Check that `PYPI_API_TOKEN` is configured in the repository or `pypi` environment,
+that the token is scoped to the `cellon` project, and that the workflow uses the
+`__token__` username. For Test PyPI, verify `TEST_PYPI_API_TOKEN` separately.
 
 ### Version already exists
 

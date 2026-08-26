@@ -16,7 +16,7 @@ Cello aims to be a comprehensive, performant, and secure Python web framework fo
 | SIMD JSON | ✅ |
 | Zero-copy requests | ✅ |
 | HTTP/2 | ✅ |
-| HTTP/3 (QUIC) | ✅ |
+| HTTP/3 (QUIC) | 🔲 |
 | **Routing** | |
 | Radix tree routing | ✅ |
 | Route constraints | ✅ |
@@ -42,15 +42,15 @@ Cello aims to be a comprehensive, performant, and secure Python web framework fo
 | Health Checks | ✅ |
 | **API Protocols** | |
 | REST | ✅ |
-| GraphQL | ✅ |
-| gRPC | ✅ |
+| GraphQL (HTTP query/mutation) | ✅ |
+| gRPC (JSON generic HTTP/2 transport) | ✅ |
 | WebSocket | ✅ |
 | SSE | ✅ |
 | **Database** | |
 | Connection Pooling | ✅ |
-| Event Sourcing | ✅ |
-| CQRS | ✅ |
-| ORM Integration | ✅ |
+| Event Sourcing (DuckDB/in-memory) | ✅ |
+| CQRS runtime | 🔲 |
+| ORM Integration (lightweight) | ✅ |
 | Migrations | 🔲 |
 | **Documentation** | |
 | OpenAPI/Swagger | ✅ |
@@ -197,11 +197,11 @@ async def transfer(request, db=Depends(get_db)):
 
 ### v0.9.0 - API Protocols (Released February 2026) :white_check_mark:
 
-#### GraphQL Support ✅
-- Schema-first and code-first approaches
-- Subscriptions via WebSocket
-- DataLoader for N+1 prevention
-- Federation support
+#### GraphQL Support (partial)
+- Python decorator/schema builder
+- HTTP GET/POST query and mutation execution
+- Limited introspection and explicit DataLoader
+- WebSocket subscription transport, federation, and full schema validation remain pending
 
 ```python
 from cello.graphql import Query, Mutation, Subscription, Schema, DataLoader
@@ -224,19 +224,19 @@ schema = Schema(
     mutations=[create_user],
     subscriptions=[user_created],
 )
-app.mount("/graphql", schema)
+app.mount_graphql(schema)
 ```
 
-#### gRPC Support ✅
-- Protocol buffer integration
-- Bidirectional streaming
-- gRPC-Web for browser clients
-- Reflection service
+#### gRPC Support (partial)
+- Real `grpc.aio` HTTP/2 generic transport
+- JSON payload serialization for the Python convenience API
+- Unary and server-streaming calls
+- Protobuf-generated stubs, bidirectional streaming, gRPC-Web, and reflection remain pending
 
 ```python
 from cello.grpc import GrpcService, grpc_method, GrpcConfig, GrpcRequest, GrpcResponse
 
-app.enable_grpc(GrpcConfig(port=50051, enable_reflection=True, enable_grpc_web=True))
+app.enable_grpc(GrpcConfig(address="[::]:50051"))
 
 class UserService(GrpcService):
     @grpc_method
@@ -247,17 +247,16 @@ class UserService(GrpcService):
 app.add_grpc_service(UserService())
 ```
 
-#### Message Queue Adapters ✅
-- Kafka consumer/producer
-- RabbitMQ integration
-- Dead letter queue handling
-- Consumer group management
+#### Message Queue Adapters (partial)
+- Redis Streams producer/consumer with consumer groups and acknowledgements
+- RabbitMQ AMQP producer/consumer with durable queues and acknowledgements
+- Kafka and SQS external clients, dead-letter routing, and Kafka consumer groups remain pending
 
 ```python
 from cello.messaging import KafkaConfig, kafka_consumer, kafka_producer, Message, MessageResult
 
 app.enable_messaging(KafkaConfig(
-    bootstrap_servers="localhost:9092",
+    brokers=["localhost:9092"],
     group_id="order-processor",
 ))
 
@@ -272,81 +271,27 @@ async def process_order(message: Message):
 
 ### v0.10.0 - Advanced Patterns (Released February 2026) :white_check_mark:
 
-#### Event Sourcing
-- Event store integration
-- Aggregate root pattern
-- Event replay
-- Snapshots
+#### Event Sourcing (partial)
+- DuckDB and in-memory event stores
+- Ordered event replay and incremental reads
+- Optimistic aggregate version checks
+- Persisted snapshots
+- PostgreSQL persistence, aggregate helper classes, and upcasting remain planned
 
 ```python
-from cello.eventsourcing import Aggregate, Event, event_handler
+from cello import App, EventSourcingConfig
 
-class Order(Aggregate):
-    @event_handler(OrderCreated)
-    def on_created(self, event):
-        self.id = event.order_id
-        self.status = "created"
-
-    @event_handler(OrderShipped)
-    def on_shipped(self, event):
-        self.status = "shipped"
+app = App()
+app.enable_event_sourcing(EventSourcingConfig.duckdb("./data/events.duckdb"))
 ```
 
-#### CQRS (Command Query Responsibility Segregation)
-- Separate read/write models
-- Command handlers
-- Query handlers
-- Event-driven sync
+#### CQRS (planned)
 
-```python
-from cello.cqrs import Command, Query, command_handler, query_handler
+The Rust App method currently records configuration only. A complete command/query bus runtime remains planned; no `Command`, `Query`, or handler API is promised by the current package.
 
-class CreateOrderCommand(Command):
-    customer_id: str
-    items: list[OrderItem]
+#### Saga Pattern (planned)
 
-@command_handler(CreateOrderCommand)
-async def handle_create_order(command, db):
-    order = Order.create(command.customer_id, command.items)
-    await db.save(order)
-    return order.id
-
-class GetOrderQuery(Query):
-    order_id: str
-
-@query_handler(GetOrderQuery)
-async def handle_get_order(query, read_db):
-    return await read_db.get_order(query.order_id)
-```
-
-#### Saga Pattern
-- Distributed transaction coordination
-- Compensation logic
-- Step-by-step execution
-- Rollback support
-
-```python
-from cello.saga import Saga, SagaStep
-
-class OrderSaga(Saga):
-    steps = [
-        SagaStep(
-            name="reserve_inventory",
-            action=reserve_inventory,
-            compensate=release_inventory
-        ),
-        SagaStep(
-            name="process_payment",
-            action=charge_payment,
-            compensate=refund_payment
-        ),
-        SagaStep(
-            name="ship_order",
-            action=create_shipment,
-            compensate=cancel_shipment
-        )
-    ]
-```
+The current `App.enable_saga()` method records configuration only. Distributed orchestration, compensation, retries, and persistent recovery remain planned.
 
 ---
 

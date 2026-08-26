@@ -66,7 +66,7 @@ pip install cellon
 
 **Requirements:** Python 3.12+
 
-Release artifacts are built by GitHub Actions. See [`PUBLISHING.md`](PUBLISHING.md) for the PyPI Trusted Publishing setup.
+Release artifacts are built by GitHub Actions. See [`PUBLISHING.md`](PUBLISHING.md) for the `PYPI_API_TOKEN` setup.
 
 ---
 
@@ -175,12 +175,12 @@ python app.py
 
 | Feature | Description |
 |---------|-------------|
-| 🔷 **GraphQL** | Query, Mutation, Subscription decorators with Schema builder |
-| 📊 **DataLoader** | N+1 prevention with automatic batching and caching |
-| 🔌 **gRPC** | Service-based gRPC with unary, streaming, and bidirectional support |
-| 📨 **Kafka** | Consumer/producer decorators with automatic message routing |
-| 🐰 **RabbitMQ** | AMQP messaging with topic exchanges and prefetch control |
-| ☁️ **SQS/SNS** | AWS message queue integration with LocalStack support |
+| 🔷 **GraphQL** | Python Query/Mutation/Subscription engine with HTTP query mounting |
+| 📊 **DataLoader** | Explicit batching and caching loader |
+| 🔌 **gRPC** | Real grpc.aio HTTP/2 generic transport with JSON unary/server-streaming calls |
+| 📨 **Kafka** | Compatibility producer/consumer adapter; external Kafka client pending |
+| 🐰 **RabbitMQ** | Real AMQP producer/consumer with durable queues and acknowledgements |
+| ☁️ **SQS/SNS** | Compatibility configuration API; external SQS client pending |
 
 ### Protocol Support
 
@@ -188,7 +188,7 @@ python app.py
 |---------|-------------|
 | 🔒 **TLS/SSL** | Native HTTPS with rustls |
 | ⚡ **HTTP/2** | Multiplexed connections with h2 |
-| 🚀 **HTTP/3** | QUIC protocol support with quinn |
+| 🚀 **HTTP/3** | Configuration only; QUIC listener pending |
 | 🏭 **Cluster Mode** | Multi-worker process deployment |
 
 ---
@@ -249,6 +249,7 @@ def create_user(info, name: str, email: str):
     return {"id": 3, "name": name, "email": email}
 
 schema = Schema().query(users).mutation(create_user).build()
+app.mount_graphql(schema)
 
 # --- gRPC ---
 class UserService(GrpcService):
@@ -256,11 +257,11 @@ class UserService(GrpcService):
     async def get_user(self, request):
         return {"id": request.data.get("id"), "name": "Alice"}
 
-app.enable_grpc(GrpcConfig(port=50051, reflection=True))
-app.add_grpc_service("UserService", ["GetUser", "ListUsers"])
+app.enable_grpc(GrpcConfig(address="[::]:50051"))
+app.add_grpc_service(UserService())
 
 # --- Kafka ---
-app.enable_messaging(KafkaConfig(brokers="localhost:9092", group_id="my-app"))
+app.enable_messaging(KafkaConfig(brokers=["localhost:9092"], group_id="my-app"))
 
 @kafka_consumer(topic="user-events", group="processors")
 async def handle_user_event(message):
@@ -539,7 +540,7 @@ return Response.no_content()
 | **JWT** | jsonwebtoken |
 | **gRPC** | Custom Rust gRPC engine |
 | **GraphQL** | Python engine with Rust serialization |
-| **Messaging** | Kafka, RabbitMQ, SQS adapters |
+| **Messaging** | Redis Streams and RabbitMQ clients; Kafka/SQS compatibility APIs |
 | **Templates** | MiniJinja 2 (Jinja2-compatible, Rust) |
 
 ---
@@ -608,17 +609,17 @@ Source builds and CI checks run in GitHub Actions. See `.github/workflows/ci.yml
 
 ### v0.10.0 — Event Sourcing, CQRS & Saga Pattern
 
-- **Event Sourcing**: Aggregate root pattern, event store, snapshot support, event versioning
+- **Event Sourcing**: DuckDB/in-memory event store, replay, snapshots, and optimistic versions
 - **CQRS**: Command/Query buses, separate read/write models, event-driven sync
 - **Saga Pattern**: Distributed transaction coordination, compensation logic, persistent state, retry with backoff
 
 ### v0.9.0 — GraphQL, gRPC & Message Queues
 
-- **GraphQL**: Query, Mutation, Subscription decorators, DataLoader for N+1 prevention, schema introspection
-- **gRPC**: Protocol buffer integration, bidirectional streaming, gRPC-Web, reflection service
+- **GraphQL**: Query, Mutation, Subscription decorators, DataLoader, HTTP query/mutation endpoint, and limited introspection
+- **gRPC**: Real grpc.aio HTTP/2 generic transport with JSON payloads, unary calls, and server streaming; protobuf-generated stubs, reflection, gRPC-Web, and bidirectional streaming remain pending
 - **Kafka**: Consumer/producer decorators, consumer group management, dead letter queues
-- **RabbitMQ**: AMQP messaging with topic exchanges and prefetch control
-- **SQS/SNS**: AWS message queue integration with LocalStack support
+- **RabbitMQ**: Real AMQP producer/consumer with durable queues and acknowledgements
+- **SQS/SNS**: Compatibility configuration API; external SQS client pending
 
 ### v0.8.0 — Database & Redis Integration
 

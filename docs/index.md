@@ -95,7 +95,7 @@ hide:
 
     ---
 
-    First-class support for **HTTP/2**, **HTTP/3** (QUIC), **WebSocket**, and **Server-Sent Events** -- all powered by Rust's async runtime.
+    First-class support for **HTTP/2**, **WebSocket**, and **Server-Sent Events** -- all powered by Rust's async runtime. HTTP/3 (QUIC) remains planned.
 
     [:octicons-arrow-right-24: Real-time features](features/realtime/websocket.md)
 
@@ -111,7 +111,7 @@ hide:
 
     ---
 
-    Native **GraphQL** with subscriptions, **gRPC** with streaming, and message queue adapters for **Kafka**, **RabbitMQ**, and **SQS**.
+    Python GraphQL HTTP queries/mutations, JSON gRPC HTTP/2 transport, and real Redis Streams/RabbitMQ message adapters.
 
     [:octicons-arrow-right-24: API protocols](enterprise/integration/graphql.md)
 
@@ -119,7 +119,7 @@ hide:
 
     ---
 
-    **Event Sourcing**, **CQRS**, and **Saga** orchestration built right into the framework. Enterprise architecture, zero boilerplate. _Stable in v1.0.1_.
+    **Event Sourcing** with DuckDB persistence and snapshots. CQRS and Saga configuration APIs are available; their runtime buses and orchestration remain planned.
 
     [:octicons-arrow-right-24: Event Sourcing](examples/enterprise/event-sourcing.md)
 
@@ -138,7 +138,7 @@ hide:
     pip install cello-framework
 
     # Or with optional dependencies
-    pip install cello-framework[graphql,grpc,kafka]
+    pip install cello-framework[grpc,messaging,eventsourcing]
 
     # Verify installation
     python -c "import cello; print(cello.__version__)"
@@ -197,35 +197,39 @@ hide:
 === ":material-source-branch: Event Sourcing"
 
     ```python
-    from cello import App
-    from cello.eventsourcing import EventStore, Event, AggregateRoot
+    from cello import App, EventSourcingConfig
+    from cello.eventsourcing import Event, Aggregate, event_handler
 
     app = App()
-    store = EventStore()
+    app.enable_event_sourcing(EventSourcingConfig.duckdb("./data/events.duckdb"))
 
-    class OrderCreated(Event):
-        order_id: str
-        customer: str
-        total: float
+    # The store becomes available after the startup lifecycle hook.
+    # In a startup hook, use: store = app.event_store
 
-    class Order(AggregateRoot):
+    class Order(Aggregate):
         def create(self, customer: str, total: float):
-            self.apply(OrderCreated(
-                order_id=self.id,
-                customer=customer,
-                total=total
+            self.apply(Event(
+                event_type="OrderCreated",
+                data={"customer": customer, "total": total},
+                aggregate_id=self.id,
             ))
 
-        def on_order_created(self, event: OrderCreated):
-            self.customer = event.customer
-            self.total = event.total
+        @event_handler("OrderCreated")
+        def on_order_created(self, event):
+            self.state["customer"] = event.data["customer"]
+            self.state["total"] = event.data["total"]
 
     @app.post("/orders")
     async def create_order(request):
         data = request.json()
         order = Order()
         order.create(data["customer"], data["total"])
-        await store.save(order)
+        await app.event_store.append(
+            order.id,
+            order.uncommitted_events,
+            expected_version=0,
+            snapshot_state=order.state,
+        )
         return {"order_id": order.id, "status": "created"}
     ```
 
@@ -274,7 +278,7 @@ graph LR
 
 ## :material-chart-bar: Feature Highlights
 
-Everything below is built in and runs on the Rust hot path:
+The following capabilities are available in the current release; protocol and pattern limitations are documented in their integration pages:
 
 | Capability | Status |
 |------------|:------:|
@@ -284,17 +288,17 @@ Everything below is built in and runs on the Rust hot path:
 | **SIMD JSON** | :material-check-circle: |
 | **WebSocket** | :material-check-circle: |
 | **HTTP/2** | :material-check-circle: |
-| **HTTP/3 (QUIC)** | :material-check-circle: |
+| **HTTP/3 (QUIC)** | :material-progress-clock: |
 | **Server-Sent Events** | :material-check-circle: |
-| **GraphQL** | :material-check-circle: |
-| **gRPC** | :material-check-circle: |
-| **Message Queues** | :material-check-circle: |
+| **GraphQL HTTP (partial)** | :material-check-circle: |
+| **gRPC JSON generic HTTP/2 (partial)** | :material-check-circle: |
+| **Redis/RabbitMQ Messaging (partial)** | :material-check-circle: |
 | **Dependency Injection** | :material-check-circle: |
 | **RBAC Guards** | :material-check-circle: |
 | **OpenAPI Auto-Gen** | :material-check-circle: |
-| **Event Sourcing** | :material-check-circle: |
-| **CQRS** | :material-check-circle: |
-| **Saga Pattern** | :material-check-circle: |
+| **Event Sourcing (DuckDB/in-memory)** | :material-check-circle: |
+| **CQRS** | :material-progress-clock: |
+| **Saga Pattern** | :material-progress-clock: |
 
 ---
 
@@ -348,11 +352,11 @@ Everything below is built in and runs on the Rust hot path:
 
     ---
 
-    - **async-graphql** -- GraphQL engine
-    - **tonic** -- gRPC framework
-    - **rdkafka** -- Apache Kafka
-    - **lapin** -- RabbitMQ (AMQP)
-    - **SQS** -- AWS message queue
+    - **Python GraphQL engine** -- HTTP query/mutation endpoint
+    - **grpc.aio** -- JSON generic gRPC over HTTP/2
+    - **redis.asyncio** -- Redis Streams client
+    - **aio-pika** -- RabbitMQ AMQP client
+    - **DuckDB** -- optional persistent event store
 
 </div>
 

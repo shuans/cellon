@@ -1,11 +1,11 @@
 ---
 title: gRPC Integration
-description: gRPC support in Cello Framework - services, methods, streaming, and reflection
+description: gRPC support in Cello Framework - JSON generic services, methods, and server streaming
 ---
 
 # gRPC Integration
 
-Cello provides gRPC support with class-based service definitions, automatic method discovery, and Rust-powered serialization.
+Cello provides a real asyncio gRPC HTTP/2 transport with class-based service definitions and automatic method discovery. The convenience API serializes request and response payloads as JSON; it is not wire-compatible with protobuf-generated stubs and does not currently expose reflection or gRPC-Web.
 
 ## Quick Start
 
@@ -14,7 +14,7 @@ from cello import App, GrpcConfig
 from cello.grpc import GrpcService, grpc_method, GrpcServer, GrpcRequest, GrpcResponse
 
 app = App()
-app.enable_grpc(GrpcConfig(port=50051, reflection=True))
+app.enable_grpc(GrpcConfig(address="[::]:50051"))
 
 class UserService(GrpcService):
     @grpc_method
@@ -23,11 +23,11 @@ class UserService(GrpcService):
 
     @grpc_method(stream=True)
     async def ListUsers(self, request):
-        return GrpcResponse.ok({"users": [{"id": 1}, {"id": 2}]})
+        for user in [{"id": 1}, {"id": 2}]:
+            yield user
 
-server = GrpcServer(host="localhost", port=50051)
-server.register_service(UserService())
-await server.start()
+app.add_grpc_service(UserService())
+app.run()
 ```
 
 ## GrpcService
@@ -67,7 +67,8 @@ async def GetUser(self, request):
 # Streaming RPC
 @grpc_method(stream=True)
 async def ListUsers(self, request):
-    return GrpcResponse.ok({"users": [...]})
+    for user in users:
+        yield user
 ```
 
 ## GrpcRequest and GrpcResponse
@@ -117,12 +118,10 @@ server = GrpcServer(host="localhost", port=50051)
 server.register_service(UserService())
 server.register_service(OrderService())
 
-# Start/stop
+# Start/stop for standalone use
 await server.start()
+print(server.get_services())  # ["UserService", "OrderService"]
 await server.stop()
-
-# Query registered services
-print(server.get_services())  # {"UserService": <UserService>, "OrderService": <OrderService>}
 ```
 
 ## GrpcChannel (Client)
@@ -137,10 +136,11 @@ channel = await GrpcChannel.connect("localhost:50051")
 response = await channel.call(
     service="UserService",
     method="GetUser",
-    request=GrpcRequest(data={"id": 1})
+    request={"id": 1},
+    metadata={"authorization": "Bearer token123"},
 )
 
-print(response.data)  # {"id": 1, "name": "Alice"}
+print(response)  # {"id": 1, "name": "Alice"}
 await channel.close()
 ```
 
@@ -173,21 +173,19 @@ from cello import App, GrpcConfig
 
 app = App()
 app.enable_grpc(GrpcConfig(
-    port=50051,
+    address="[::]:50051",
     max_message_size=4_194_304,   # 4MB
-    reflection=True,
-    enable_web=True,
     keepalive_secs=60,
-    concurrency_limit=100
+    concurrency_limit=100,
 ))
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `port` | `50051` | gRPC server port |
+| `address` | `[::]:50051` | gRPC server bind address |
 | `max_message_size` | `4MB` | Max message size in bytes |
-| `reflection` | `False` | Enable gRPC reflection service |
-| `enable_web` | `False` | Enable gRPC-Web for browser clients |
+| `reflection` | `True` | Configuration is retained for compatibility; reflection service is not exposed |
+| `enable_web` | `False` | Configuration is retained for compatibility; gRPC-Web is not exposed |
 | `keepalive_secs` | `60` | Keepalive interval |
 | `concurrency_limit` | `100` | Max concurrent streams |
 
@@ -202,4 +200,4 @@ app.enable_grpc(GrpcConfig(
 | `GrpcServer` | Server for hosting gRPC services |
 | `GrpcChannel` | Client for calling gRPC services |
 | `GrpcError` | Exception class with standard gRPC status codes |
-| `GrpcConfig` | Rust-backed configuration class |
+| `GrpcConfig` | Rust-backed bind and transport configuration class |

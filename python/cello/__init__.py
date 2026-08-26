@@ -53,6 +53,7 @@ Example:
 
 """
 
+import json
 import sys as _sys
 
 if _sys.version_info < (3, 12):
@@ -502,6 +503,14 @@ class App:
         self._template_engine: "MiniJinjaEngine | None" = None  # v1.1.0
         self._redis = None  # Native Redis client; set by enable_redis()
         self._database = None  # Native database backend; set by enable_database()
+        self._event_sourcing_config = None
+        self._event_store = None
+        self._event_sourcing_hooks_registered = False
+        self._graphql_engine = None
+        self._graphql_path = None
+        self._grpc_server = None
+        self._grpc_config = None
+        self._grpc_hooks_registered = False
         self._cluster_workers = None
         self.state = _AppState()  # Scratch namespace for user-held resources
 
@@ -1381,41 +1390,57 @@ class App:
     # ========================================================================
 
     def enable_grpc(self, config: "GrpcConfig" = None):
-        """
-        Record gRPC configuration (config only).
+        """Enable a real ``grpc.aio`` server managed with the App lifecycle.
 
-        NOTE: this does not start a gRPC server. The gRPC runtime is provided by
-        the ``cello.grpc`` module; this call validates and records config.
-
-        Args:
-            config: GrpcConfig instance
-
-        Example:
-            from cello import App, GrpcConfig
-
-            app = App()
-            app.enable_grpc(GrpcConfig(
-                address="[::]:50051",
-                reflection=True,
-                enable_web=True
-            ))
+        Register Python services with :meth:`add_grpc_service` before the HTTP
+        application starts. The gRPC transport uses JSON serializers for the
+        generic service API; protobuf-generated stubs are not supported by this
+        convenience layer.
         """
         if config is None:
             config = GrpcConfig()
+        if self._grpc_server is not None:
+            raise RuntimeError("gRPC is already enabled on this App")
         self._app.enable_grpc(config)
+        from .grpc import GrpcServer
 
-    def add_grpc_service(self, name: str, methods: list = None):
+        self._grpc_config = config
+        self._grpc_server = GrpcServer(config=config)
+
+        if not self._grpc_hooks_registered:
+            async def start_grpc():
+                await self._grpc_server.start()
+
+            async def stop_grpc():
+                await self._grpc_server.stop()
+
+            self.on_event("startup")(start_grpc)
+            self.on_event("shutdown")(stop_grpc)
+            self._grpc_hooks_registered = True
+        return None
+
+    @property
+    def grpc_server(self):
+        """The configured Python gRPC server, or ``None`` if disabled."""
+        return self._grpc_server
+
+    def add_grpc_service(self, service_or_name, methods: list = None):
+        """Register a Python ``GrpcService`` or a native service definition.
+
+        Passing a ``GrpcService`` instance exposes its decorated methods through
+        the real ``grpc.aio`` server. The legacy ``name, methods`` form remains
+        available for native service metadata registration.
         """
-        Record a gRPC service name (config only; runtime lives in ``cello.grpc``).
+        from .grpc import GrpcService
 
-        Args:
-            name: Service name
-            methods: Optional list of method names
-
-        Example:
-            app.add_grpc_service("UserService", ["GetUser", "ListUsers"])
-        """
-        self._app.add_grpc_service(name, methods)
+        if isinstance(service_or_name, GrpcService):
+            if self._grpc_server is None:
+                self.enable_grpc()
+            self._grpc_server.register_service(service_or_name)
+            return self
+        self._app.add_grpc_service(service_or_name, methods)
+        # Preserve the legacy metadata-registration return value.
+        return None
 
     def enable_messaging(self, config: "KafkaConfig" = None):
         """
@@ -1490,10 +1515,11 @@ class App:
 
     def enable_event_sourcing(self, config=None):
         """
-        Record event-sourcing configuration (config only).
+        Configure the application event store.
 
-        NOTE: event stores, aggregates, and snapshots are provided by the
-        ``cello.eventsourcing`` module; this call records config.
+        The store is opened during the application's startup lifecycle and
+        closed during shutdown. Memory storage is the default; use
+        ``EventSourcingConfig.duckdb(path)`` for persistence.
 
         Args:
             config: EventSourcingConfig instance or None for defaults.
@@ -1505,16 +1531,65 @@ class App:
             from cello import App, EventSourcingConfig
 
             app = App()
-            app.enable_event_sourcing(EventSourcingConfig(
-                store_type="postgresql",
-                snapshot_interval=100,
-                enable_snapshots=True,
-            ))
+            app.enable_event_sourcing(EventSourcingConfig.duckdb("./data/events.duckdb"))
         """
         if config is None:
             config = EventSourcingConfig()
-        self._app.enable_event_sourcing(config)
+
+        # Accept both the Rust-exposed top-level config and the Python helper
+        # config from cello.eventsourcing.
+        native_config = config
+        if getattr(config.__class__, "__module__", None) != getattr(
+            EventSourcingConfig, "__module__", None
+        ):
+            native_config = EventSourcingConfig(
+                store_type=getattr(config, "store_type", "memory"),
+                snapshot_interval=getattr(config, "snapshot_interval", 100),
+                enable_snapshots=getattr(config, "enable_snapshots", True),
+                max_events_per_aggregate=getattr(
+                    config,
+                    "max_events_per_aggregate",
+                    getattr(config, "max_events", 10000),
+                ),
+                connection_url=getattr(
+                    config,
+                    "connection_url",
+                    getattr(config, "_connection_url", None),
+                ),
+            )
+        self._app.enable_event_sourcing(native_config)
+        self._event_sourcing_config = config
+
+        if self._event_sourcing_hooks_registered:
+            return self
+
+        from .eventsourcing import EventStore
+
+        async def open_event_store():
+            active_config = self._event_sourcing_config
+            self._event_store = await EventStore.connect(active_config)
+            self.state.event_store = self._event_store
+
+        async def close_event_store():
+            if self._event_store is not None:
+                await self._event_store.close()
+                self._event_store = None
+                self.state.event_store = None
+
+        self.on_event("startup")(open_event_store)
+        self.on_event("shutdown")(close_event_store)
+        self._event_sourcing_hooks_registered = True
         return self
+
+    @property
+    def event_sourcing_config(self):
+        """The configured EventSourcingConfig, or None if disabled."""
+        return self._event_sourcing_config
+
+    @property
+    def event_store(self):
+        """The connected EventStore, available after application startup."""
+        return self._event_store
 
     def enable_cqrs(self, config=None):
         """
@@ -1623,26 +1698,131 @@ class App:
         """
         self._app.enable_health_checks(config)
 
-    def enable_graphql(self, config: "GraphQLConfig" = None):
+    @property
+    def graphql(self):
+        """The mounted Python GraphQL engine, or ``None`` if disabled."""
+        return self._graphql_engine
+
+    def mount_graphql(
+        self,
+        schema=None,
+        path: str = "/graphql",
+        playground: bool = True,
+        introspection: bool = True,
+    ):
+        """Mount the Python GraphQL engine on HTTP GET/POST routes.
+
+        ``schema`` may be an existing ``GraphQL`` engine, a ``Schema`` builder,
+        or ``None`` for an empty engine that can be populated through
+        ``app.graphql.add_query(...)`` after mounting. GET without a ``query``
+        serves a small Playground page when enabled; POST accepts the standard
+        ``query``, ``variables``, and ``operationName`` JSON fields.
         """
-        Enable GraphQL endpoint with optional Playground.
+        from .graphql import GraphQL
 
-        Args:
-            config: GraphQLConfig instance
+        if not isinstance(path, str) or not path.startswith("/"):
+            raise ValueError("GraphQL path must start with '/'")
+        if self._graphql_engine is not None:
+            if self._graphql_path == path:
+                raise RuntimeError(f"GraphQL is already mounted at '{path}'")
+            raise RuntimeError("Only one GraphQL endpoint can be mounted per App")
 
-        Example:
-            from cello import App, GraphQLConfig
+        if schema is None:
+            engine = GraphQL(introspection=introspection)
+        elif isinstance(schema, GraphQL):
+            engine = schema.set_introspection(introspection)
+        elif hasattr(schema, "build"):
+            engine = schema.build().set_introspection(introspection)
+        else:
+            raise TypeError("schema must be GraphQL, Schema, or None")
 
-            app = App()
-            app.enable_graphql(GraphQLConfig(
-                path="/graphql",
-                playground=True,
-                introspection=True
-            ))
+        def playground_page():
+            return (
+                "<!doctype html><html><head><meta charset=\"utf-8\">"
+                f"<title>GraphQL Playground</title></head><body>"
+                f"<form method=\"post\" action=\"{path}\">"
+                "<textarea name=\"query\" rows=\"18\" cols=\"90\">"
+                "{ __schema { queryType { name } } }</textarea>"
+                "<button type=\"submit\">Execute</button></form></body></html>"
+            )
+
+        @self.get(path)
+        async def graphql_get(request):
+            query = request.get_query_param("query", None)
+            if not query:
+                if playground:
+                    return Response.html(playground_page())
+                return Response.json(
+                    {"data": None, "errors": [{"message": "Query parameter 'query' is required"}]},
+                    status=400,
+                )
+            variables_raw = request.get_query_param("variables", None)
+            variables = None
+            if variables_raw:
+                try:
+                    variables = json.loads(variables_raw)
+                except json.JSONDecodeError:
+                    return Response.json(
+                        {"data": None, "errors": [{"message": "variables must be valid JSON"}]},
+                        status=400,
+                    )
+                if not isinstance(variables, dict):
+                    return Response.json(
+                        {"data": None, "errors": [{"message": "variables must be an object"}]},
+                        status=400,
+                    )
+            result = await engine.execute(
+                query,
+                variables=variables,
+                operation_name=request.get_query_param("operationName", None),
+            )
+            return Response.json(result)
+
+        @self.post(path)
+        async def graphql_post(request):
+            try:
+                payload = request.json()
+            except Exception as exc:
+                return Response.json(
+                    {"data": None, "errors": [{"message": f"Invalid JSON body: {exc}"}]},
+                    status=400,
+                )
+            if not isinstance(payload, dict) or not isinstance(payload.get("query"), str):
+                return Response.json(
+                    {"data": None, "errors": [{"message": "JSON body must contain a string 'query'"}]},
+                    status=400,
+                )
+            variables = payload.get("variables")
+            if variables is not None and not isinstance(variables, dict):
+                return Response.json(
+                    {"data": None, "errors": [{"message": "variables must be an object"}]},
+                    status=400,
+                )
+            result = await engine.execute(
+                payload["query"],
+                variables=variables,
+                operation_name=payload.get("operationName"),
+            )
+            return Response.json(result)
+
+        self._graphql_engine = engine
+        self._graphql_path = path
+        self.state.graphql = engine
+        return engine
+
+    def enable_graphql(self, config: "GraphQLConfig" = None):
+        """Enable the Python GraphQL HTTP endpoint with optional Playground.
+
+        Use ``app.graphql.add_query(...)`` or pass a built engine to
+        ``app.mount_graphql(...)`` to register resolvers.
         """
         if config is None:
             config = GraphQLConfig()
-        self._app.enable_graphql(config)
+        self.mount_graphql(
+            path=config.path,
+            playground=config.playground,
+            introspection=config.introspection,
+        )
 
     # ========================================================================
     # End Enterprise Features

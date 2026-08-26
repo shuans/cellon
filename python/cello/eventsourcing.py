@@ -2,8 +2,8 @@
 Cello Event Sourcing Module.
 
 Provides Python-friendly wrappers for event sourcing patterns including
-events, aggregates, snapshots, and an in-memory event store. Designed
-for use with the Cello framework's Rust-powered runtime.
+events, aggregates, snapshots, and persistent DuckDB or in-memory event stores.
+Designed for use with the Cello framework's Rust-powered runtime.
 
 Example:
     from cello import App
@@ -28,7 +28,7 @@ Example:
 
     # Usage in application
     app = App()
-    config = EventSourcingConfig.memory()
+    config = EventSourcingConfig.duckdb("./data/events.duckdb")
 
     @app.on_event("startup")
     async def setup():
@@ -64,9 +64,12 @@ Example:
         await app.state.event_store.close()
 """
 
+import json
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
+
+from .database import AsyncFileDatabase
 
 
 def event_handler(event_type: str) -> Callable:
@@ -393,6 +396,7 @@ class Snapshot:
         aggregate_id: str,
         version: int,
         state: Dict[str, Any],
+        timestamp: Optional[float] = None,
     ):
         """
         Initialize a new Snapshot.
@@ -405,7 +409,7 @@ class Snapshot:
         self.aggregate_id: str = aggregate_id
         self.version: int = version
         self.state: Dict[str, Any] = state
-        self.timestamp: float = time.time()
+        self.timestamp: float = time.time() if timestamp is None else timestamp
 
     def __repr__(self) -> str:
         return (
@@ -422,15 +426,16 @@ class EventStore:
     streams, and managing snapshots. The default implementation uses
     in-memory storage suitable for development and testing.
 
-    In production, the Rust runtime provides optimized storage backends
-    (PostgreSQL, etc.) that implement the same interface.
+    DuckDB is the persistent backend implemented by this module. PostgreSQL
+    configuration remains reserved for a future native backend and is rejected
+    by ``EventStore.connect`` until that backend exists.
 
     Attributes:
         config: EventSourcingConfig used to create this store.
         connected: Whether the store is currently connected.
 
     Example:
-        config = EventSourcingConfig.memory()
+        config = EventSourcingConfig.duckdb("./data/events.duckdb")
         store = await EventStore.connect(config)
 
         # Append events
@@ -463,8 +468,9 @@ class EventStore:
         """
         self.config: "EventSourcingConfig" = config or EventSourcingConfig()
         self.connected: bool = False
+        self._database: Optional[AsyncFileDatabase] = None
 
-        # Internal dict-based storage for testing/development
+        # Internal dict-based storage for testing/development.
         self._events: Dict[str, List[Event]] = {}
         self._snapshots: Dict[str, Snapshot] = {}
 
@@ -486,10 +492,55 @@ class EventStore:
             store = await EventStore.connect(config)
         """
         store = cls(config)
+        store_type = getattr(store.config, "store_type", "memory").lower()
+        if store_type not in {"memory", "duckdb"}:
+            raise ValueError(
+                f"EventStore backend {store_type!r} is not implemented; "
+                "use EventSourcingConfig.memory() or EventSourcingConfig.duckdb(path)."
+            )
+        if store_type == "duckdb":
+            connection_url = getattr(store.config, "connection_url", None)
+            if not connection_url:
+                connection_url = getattr(store.config, "_connection_url", None)
+            if not connection_url:
+                raise ValueError("DuckDB event sourcing requires a database path")
+            if "://" not in connection_url:
+                connection_url = f"duckdb://{connection_url}"
+            store._database = AsyncFileDatabase.from_url(connection_url)
+            await store._database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cello_events (
+                    event_id VARCHAR PRIMARY KEY,
+                    aggregate_id VARCHAR NOT NULL,
+                    event_type VARCHAR NOT NULL,
+                    data_json VARCHAR NOT NULL,
+                    metadata_json VARCHAR NOT NULL,
+                    version BIGINT NOT NULL,
+                    timestamp DOUBLE NOT NULL,
+                    UNIQUE (aggregate_id, version)
+                )
+                """
+            )
+            await store._database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cello_snapshots (
+                    aggregate_id VARCHAR PRIMARY KEY,
+                    version BIGINT NOT NULL,
+                    state_json VARCHAR NOT NULL,
+                    timestamp DOUBLE NOT NULL
+                )
+                """
+            )
         store.connected = True
         return store
 
-    async def append(self, aggregate_id: str, events: List[Event]) -> None:
+    async def append(
+        self,
+        aggregate_id: str,
+        events: List[Event],
+        expected_version: Optional[int] = None,
+        snapshot_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Append events to the event stream for an aggregate.
 
@@ -499,9 +550,14 @@ class EventStore:
         Args:
             aggregate_id: ID of the aggregate owning these events.
             events: List of Event objects to append.
+            expected_version: Optional current stream version for optimistic
+                concurrency control. ``None`` appends at the observed version.
+            snapshot_state: Exact aggregate state to persist when the append
+                reaches the configured snapshot interval.
 
         Raises:
             RuntimeError: If the store is not connected.
+            ValueError: If the expected version or event retention limit fails.
 
         Example:
             event = Event("ItemAdded", {"item": "Widget"}, aggregate_id="cart-1")
@@ -509,25 +565,112 @@ class EventStore:
         """
         if not self.connected:
             raise RuntimeError("EventStore is not connected. Call connect() first.")
+        if not events:
+            return
+
+        max_events = getattr(
+            self.config,
+            "max_events_per_aggregate",
+            getattr(self.config, "max_events", 10000),
+        )
+
+        if self._database is not None:
+            async with self._database.transaction() as tx:
+                current_version = await tx.fetchval(
+                    "SELECT COALESCE(MAX(version), 0) AS version "
+                    "FROM cello_events WHERE aggregate_id = $1",
+                    aggregate_id,
+                )
+                current_version = int(current_version or 0)
+                if expected_version is not None and current_version != expected_version:
+                    raise ValueError(
+                        f"Concurrency conflict for aggregate {aggregate_id!r}: "
+                        f"expected version {expected_version}, actual {current_version}"
+                    )
+                if current_version + len(events) > max_events:
+                    raise ValueError(
+                        f"Aggregate {aggregate_id!r} would exceed max events limit of {max_events}"
+                    )
+
+                next_version = current_version
+                for event in events:
+                    next_version += 1
+                    event.version = next_version
+                    event.aggregate_id = aggregate_id
+                    await tx.execute(
+                        """
+                        INSERT INTO cello_events
+                            (event_id, aggregate_id, event_type, data_json,
+                             metadata_json, version, timestamp)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        event.id,
+                        aggregate_id,
+                        event.event_type,
+                        json.dumps(event.data, separators=(",", ":")),
+                        json.dumps(event.metadata, separators=(",", ":")),
+                        event.version,
+                        event.timestamp,
+                    )
+
+                snapshot_interval = getattr(self.config, "snapshot_interval", 0)
+                if (
+                    getattr(self.config, "enable_snapshots", True)
+                    and snapshot_interval > 0
+                    and next_version // snapshot_interval > current_version // snapshot_interval
+                ):
+                    if snapshot_state is None:
+                        snapshot_state = _derive_snapshot_state(
+                            await tx.fetch(
+                                """
+                                SELECT data_json FROM cello_events
+                                WHERE aggregate_id = $1
+                                ORDER BY version ASC
+                                """,
+                                aggregate_id,
+                            )
+                        )
+                    await _upsert_snapshot(
+                        tx,
+                        Snapshot(aggregate_id, next_version, snapshot_state),
+                    )
+            return
 
         if aggregate_id not in self._events:
             self._events[aggregate_id] = []
 
         current_version = len(self._events[aggregate_id])
+        if expected_version is not None and current_version != expected_version:
+            raise ValueError(
+                f"Concurrency conflict for aggregate {aggregate_id!r}: "
+                f"expected version {expected_version}, actual {current_version}"
+            )
+        if current_version + len(events) > max_events:
+            raise ValueError(
+                f"Aggregate {aggregate_id!r} would exceed max events limit of {max_events}"
+            )
+
         for event in events:
             current_version += 1
             event.version = current_version
             event.aggregate_id = aggregate_id
             self._events[aggregate_id].append(event)
 
-        # Auto-snapshot if configured
         if (
-            self.config.enable_snapshots
-            and self.config.snapshot_interval > 0
-            and current_version % self.config.snapshot_interval == 0
+            getattr(self.config, "enable_snapshots", True)
+            and getattr(self.config, "snapshot_interval", 0) > 0
+            and current_version // self.config.snapshot_interval
+            > (current_version - len(events)) // self.config.snapshot_interval
         ):
-            # Store a marker; the caller is responsible for computing state
-            pass
+            if snapshot_state is None:
+                snapshot_state = _derive_snapshot_state(
+                    [{"data_json": json.dumps(event.data)} for event in self._events[aggregate_id]]
+                )
+            previous = self._snapshots.get(aggregate_id)
+            if previous is None or current_version > previous.version:
+                self._snapshots[aggregate_id] = Snapshot(
+                    aggregate_id, current_version, dict(snapshot_state)
+                )
 
     async def get_events(
         self, aggregate_id: str, since_version: int = 0
@@ -552,6 +695,20 @@ class EventStore:
         if not self.connected:
             raise RuntimeError("EventStore is not connected. Call connect() first.")
 
+        if self._database is not None:
+            rows = await self._database.fetch(
+                """
+                SELECT event_id, aggregate_id, event_type, data_json,
+                       metadata_json, version, timestamp
+                FROM cello_events
+                WHERE aggregate_id = $1 AND version > $2
+                ORDER BY version ASC
+                """,
+                aggregate_id,
+                since_version,
+            )
+            return [_event_from_row(row) for row in rows]
+
         all_events = self._events.get(aggregate_id, [])
         return [e for e in all_events if e.version > since_version]
 
@@ -571,7 +728,14 @@ class EventStore:
         if not self.connected:
             raise RuntimeError("EventStore is not connected. Call connect() first.")
 
-        self._snapshots[snapshot.aggregate_id] = snapshot
+        if self._database is not None:
+            async with self._database.transaction() as tx:
+                await _upsert_snapshot(tx, snapshot)
+            return
+
+        previous = self._snapshots.get(snapshot.aggregate_id)
+        if previous is None or snapshot.version > previous.version:
+            self._snapshots[snapshot.aggregate_id] = snapshot
 
     async def get_snapshot(self, aggregate_id: str) -> Optional[Snapshot]:
         """
@@ -592,6 +756,24 @@ class EventStore:
         if not self.connected:
             raise RuntimeError("EventStore is not connected. Call connect() first.")
 
+        if self._database is not None:
+            row = await self._database.fetchrow(
+                """
+                SELECT aggregate_id, version, state_json, timestamp
+                FROM cello_snapshots
+                WHERE aggregate_id = $1
+                """,
+                aggregate_id,
+            )
+            if row is None:
+                return None
+            return Snapshot(
+                row["aggregate_id"],
+                int(row["version"]),
+                json.loads(row["state_json"]),
+                float(row["timestamp"]),
+            )
+
         return self._snapshots.get(aggregate_id)
 
     async def close(self) -> None:
@@ -604,16 +786,84 @@ class EventStore:
         Example:
             await store.close()
         """
+        if self._database is not None:
+            await self._database.close()
+            self._database = None
         self.connected = False
 
     def __repr__(self) -> str:
         aggregate_count = len(self._events)
         total_events = sum(len(v) for v in self._events.values())
+        backend = "duckdb" if self._database is not None else self.config.store_type
         return (
-            f"EventStore(store_type={self.config.store_type!r}, "
+            f"EventStore(store_type={backend!r}, "
             f"connected={self.connected}, aggregates={aggregate_count}, "
             f"total_events={total_events})"
         )
+
+
+async def _upsert_snapshot(tx: Any, snapshot: Snapshot) -> None:
+    """Insert a snapshot or replace it only when the new version is newer."""
+    existing = await tx.fetchval(
+        "SELECT version FROM cello_snapshots WHERE aggregate_id = $1",
+        snapshot.aggregate_id,
+    )
+    if existing is not None and int(existing) >= snapshot.version:
+        return
+    if existing is None:
+        await tx.execute(
+            """
+            INSERT INTO cello_snapshots
+                (aggregate_id, version, state_json, timestamp)
+            VALUES ($1, $2, $3, $4)
+            """,
+            snapshot.aggregate_id,
+            snapshot.version,
+            json.dumps(snapshot.state, separators=(",", ":")),
+            snapshot.timestamp,
+        )
+    else:
+        await tx.execute(
+            """
+            UPDATE cello_snapshots
+            SET version = $2, state_json = $3, timestamp = $4
+            WHERE aggregate_id = $1 AND version < $2
+            """,
+            snapshot.aggregate_id,
+            snapshot.version,
+            json.dumps(snapshot.state, separators=(",", ":")),
+            snapshot.timestamp,
+        )
+
+
+def _derive_snapshot_state(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build a best-effort state snapshot when no aggregate is supplied.
+
+    Domain aggregates can pass ``snapshot_state`` to ``append`` for exact
+    state. The fallback keeps the latest value for each object payload key.
+    """
+    state: Dict[str, Any] = {}
+    for row in rows:
+        payload = row.get("data_json")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if isinstance(payload, dict):
+            state.update(payload)
+    return state
+
+
+def _event_from_row(row: Dict[str, Any]) -> Event:
+    """Restore an Event from a DuckDB row."""
+    event = Event(
+        event_type=row["event_type"],
+        data=json.loads(row["data_json"]),
+        aggregate_id=row["aggregate_id"],
+        metadata=json.loads(row["metadata_json"]),
+    )
+    event.id = row["event_id"]
+    event.version = int(row["version"])
+    event.timestamp = float(row["timestamp"])
+    return event
 
 
 class EventSourcingConfig:
@@ -624,7 +874,8 @@ class EventSourcingConfig:
     retention settings.
 
     Attributes:
-        store_type: Storage backend type ("memory" or "postgresql").
+        store_type: Storage backend type ("memory", "duckdb", or "postgresql").
+
         snapshot_interval: Number of events between automatic snapshots.
         enable_snapshots: Whether to enable snapshot support.
         max_events: Maximum number of events to retain per aggregate.
@@ -633,8 +884,8 @@ class EventSourcingConfig:
         # In-memory for development
         config = EventSourcingConfig.memory()
 
-        # PostgreSQL for production
-        config = EventSourcingConfig.postgresql("postgresql://user:pass@localhost/events")
+        # Persistent local storage
+        config = EventSourcingConfig.duckdb("./data/events.duckdb")
     """
 
     def __init__(
@@ -643,12 +894,13 @@ class EventSourcingConfig:
         snapshot_interval: int = 100,
         enable_snapshots: bool = True,
         max_events: int = 10000,
+        connection_url: Optional[str] = None,
     ):
         """
         Initialize EventSourcingConfig.
 
         Args:
-            store_type: Storage backend ("memory" or "postgresql").
+            store_type: Storage backend ("memory", "duckdb", or "postgresql").
             snapshot_interval: Events between automatic snapshots (default: 100).
             enable_snapshots: Enable snapshot support (default: True).
             max_events: Maximum events per aggregate (default: 10000).
@@ -657,7 +909,9 @@ class EventSourcingConfig:
         self.snapshot_interval: int = snapshot_interval
         self.enable_snapshots: bool = enable_snapshots
         self.max_events: int = max_events
-        self._connection_url: Optional[str] = None
+        self.max_events_per_aggregate: int = max_events
+        self.connection_url: Optional[str] = connection_url
+        self._connection_url: Optional[str] = connection_url
 
     @classmethod
     def memory(cls) -> "EventSourcingConfig":
@@ -676,6 +930,19 @@ class EventSourcingConfig:
             snapshot_interval=100,
             enable_snapshots=True,
             max_events=10000,
+        )
+
+    @classmethod
+    def duckdb(cls, path: str) -> "EventSourcingConfig":
+        """Create a persistent Event Sourcing configuration backed by DuckDB."""
+        if not path or not path.strip():
+            raise ValueError("DuckDB event sourcing requires a non-empty database path")
+        return cls(
+            store_type="duckdb",
+            snapshot_interval=100,
+            enable_snapshots=True,
+            max_events=10000,
+            connection_url=path if "://" in path else f"duckdb://{path}",
         )
 
     @classmethod
@@ -700,6 +967,7 @@ class EventSourcingConfig:
             enable_snapshots=True,
             max_events=10000,
         )
+        config.connection_url = url
         config._connection_url = url
         return config
 
@@ -708,5 +976,5 @@ class EventSourcingConfig:
             f"EventSourcingConfig(store_type={self.store_type!r}, "
             f"snapshot_interval={self.snapshot_interval}, "
             f"enable_snapshots={self.enable_snapshots}, "
-            f"max_events={self.max_events})"
+            f"max_events={self.max_events}, connection_url={self.connection_url!r})"
         )

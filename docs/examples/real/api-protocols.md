@@ -1,19 +1,19 @@
 ---
 title: API Protocols (GraphQL, gRPC, Kafka, RabbitMQ)
-description: Configure GraphQL schemas, gRPC services with reflection, Kafka consumers, and RabbitMQ topic exchanges in Cello
+description: Configure GraphQL HTTP queries, JSON generic gRPC services, and RabbitMQ/Redis messaging in Cello
 ---
 
 # :material-protocol: API Protocols (GraphQL, gRPC, Kafka, RabbitMQ)
 
-This example demonstrates Cello's support for multi-protocol architectures. It covers mounting schema-first GraphQL endpoints with DataLoader batching and WebSocket subscriptions, running a gRPC server with reflection, consuming and producing Kafka messaging topics, and configuring RabbitMQ AMQP brokers.
+This example demonstrates Cello's multi-protocol architecture: mounting Python GraphQL HTTP endpoints, running the JSON generic gRPC HTTP/2 transport, and using real RabbitMQ/Redis messaging clients. Kafka, SQS, reflection, gRPC-Web, and GraphQL WebSocket transport remain outside this example until their dedicated integrations are added.
 
 ## Features Demonstrated
 
-- **GraphQL Integration**: Registering `@Query`, `@Mutation`, and `@Subscription` endpoints on WebSocket-mounted GraphQL schemes.
+- **GraphQL Integration**: Registering `@Query` and `@Mutation` resolvers on an HTTP-mounted GraphQL engine.
 - **DataLoader batching**: Mitigating N+1 database queries by batch loading related resource lookups.
-- **gRPC Server Config**: Serving `GrpcService` methods with active reflection and gRPC-Web bindings.
-- **Kafka Messaging**: Annotating consumers with `@kafka_consumer` and producing return payloads with `@kafka_producer`.
-- **AMQP RabbitMQ Broker**: Initiating exchanges and configuring top-level RabbitMQ message queues.
+- **gRPC Server Config**: Serving `GrpcService` methods over the JSON generic gRPC HTTP/2 transport.
+- **Kafka Compatibility API**: Demonstrating consumer/producer decorators without claiming an external Kafka connection.
+- **AMQP RabbitMQ Broker**: Connecting to RabbitMQ queues with durable delivery and acknowledgements.
 
 ## Complete Source Code
 
@@ -23,7 +23,7 @@ This example demonstrates Cello's support for multi-protocol architectures. It c
 API Protocols Demo for Cello v1.3.0.
 
 This example demonstrates the API Protocol features:
-  - GraphQL support with Query, Mutation, and Subscription decorators
+  - GraphQL support with Query, Mutation, and Subscription engine decorators
   - gRPC service definitions with streaming support
   - Kafka messaging with consumers and producers
   - RabbitMQ integration
@@ -44,13 +44,13 @@ Then test with:
 Author: Jagadeesh Katla
 """
 
-from cello import App, Response
+from cello import App, Response, GrpcConfig
 
 # GraphQL imports
 from cello.graphql import Query, Mutation, Subscription, Schema, DataLoader
 
 # gRPC imports
-from cello.grpc import GrpcService, grpc_method, GrpcServer, GrpcRequest, GrpcResponse, GrpcConfig
+from cello.grpc import GrpcService, grpc_method, GrpcServer, GrpcRequest, GrpcResponse
 
 # Messaging imports
 from cello.messaging import (
@@ -71,21 +71,18 @@ app = App()
 # Protocol Configuration
 # =============================================================================
 
-# Configure gRPC server
+# Configure the JSON generic gRPC HTTP/2 server
 grpc_config = GrpcConfig(
-    port=50051,
+    address="[::]:50051",
     max_message_size=4 * 1024 * 1024,  # 4MB
-    enable_reflection=True,
-    enable_grpc_web=True,
 )
 app.enable_grpc(grpc_config)
 
 # Configure Kafka messaging
 kafka_config = KafkaConfig(
-    bootstrap_servers="localhost:9092",
+    brokers=["localhost:9092"],
     group_id="cello-demo-group",
-    auto_offset_reset="earliest",
-    enable_auto_commit=True,
+    auto_commit=True,
 )
 app.enable_messaging(kafka_config)
 
@@ -93,8 +90,6 @@ app.enable_messaging(kafka_config)
 rabbitmq_config = RabbitMQConfig(
     url="amqp://guest:guest@localhost:5672/",
     prefetch_count=10,
-    exchange="cello_events",
-    exchange_type="topic",
 )
 app.enable_rabbitmq(rabbitmq_config)
 
@@ -197,14 +192,19 @@ async def order_updates(info, user_id: int):
 
 
 # Build the GraphQL schema
-schema = Schema(
-    queries=[users, user, orders],
-    mutations=[create_user, create_order],
-    subscriptions=[order_updates],
+schema = (
+    Schema()
+    .query(users)
+    .query(user)
+    .query(orders)
+    .mutation(create_user)
+    .mutation(create_order)
+    .subscription(order_updates)
+    .build()
 )
 
 # Mount GraphQL endpoint
-app.mount("/graphql", schema)
+app.mount_graphql(schema)
 
 
 # =============================================================================
@@ -223,7 +223,7 @@ class UserService(GrpcService):
         user_id = request.get("id")
         user = next((u for u in mock_users if u["id"] == user_id), None)
         if user is None:
-            return GrpcResponse(error="User not found", code=5)  # NOT_FOUND
+            return GrpcResponse.error(5, "User not found")  # NOT_FOUND
         return GrpcResponse(data=user)
 
     @grpc_method
@@ -261,7 +261,7 @@ class OrderService(GrpcService):
         order_id = request.get("id")
         order = next((o for o in mock_orders if o["id"] == order_id), None)
         if order is None:
-            return GrpcResponse(error="Order not found", code=5)
+            return GrpcResponse.error(5, "Order not found")
         return GrpcResponse(data=order)
 
     @grpc_method
@@ -288,7 +288,7 @@ async def handle_user_event(message: Message):
         "source": "kafka",
         "topic": "user-events",
         "event": event,
-        "offset": message.offset,
+        "message_id": message.id,
     })
     print(f"[Kafka] Received user event: {event.get('type', 'unknown')}")
     return MessageResult.ACK
@@ -302,7 +302,7 @@ async def handle_order_event(message: Message):
         "source": "kafka",
         "topic": "order-events",
         "event": event,
-        "offset": message.offset,
+        "message_id": message.id,
     })
 
     # Simulate order processing logic
@@ -323,9 +323,10 @@ async def handle_order_event(message: Message):
 # Kafka Messaging - Producers
 # =============================================================================
 
-# Create a producer instance for publishing messages
-order_producer = Producer(topic="order-events", config=kafka_config)
-user_producer = Producer(topic="user-events", config=kafka_config)
+# Use Producer.connect(config) for live broker publishing. The Kafka
+# compatibility adapter is kept here only for the decorator metadata demo.
+order_producer = None
+user_producer = None
 
 
 # =============================================================================
@@ -339,10 +340,10 @@ def home(request):
     return {
         "message": "Cello v1.3.0 - API Protocols Demo",
         "features": {
-            "graphql": "Schema-first GraphQL with Query, Mutation, Subscription",
-            "grpc": "gRPC services with reflection and gRPC-Web support",
-            "kafka": "Kafka consumer/producer with message processing",
-            "rabbitmq": "RabbitMQ integration with topic exchanges",
+            "graphql": "GraphQL HTTP queries and mutations",
+            "grpc": "JSON generic gRPC HTTP/2 services",
+            "kafka": "Kafka compatibility adapter",
+            "rabbitmq": "RabbitMQ AMQP producer/consumer",
         },
         "endpoints": {
             "rest": [
@@ -355,7 +356,7 @@ def home(request):
             ],
             "graphql": [
                 "POST /graphql            - GraphQL queries and mutations",
-                "WS   /graphql            - GraphQL subscriptions (WebSocket)",
+                "GET  /graphql            - GraphQL playground or query",
                 "GET  /graphql/status     - GraphQL schema status",
             ],
             "grpc": [
@@ -495,7 +496,7 @@ def graphql_status(request):
             },
             "features": {
                 "data_loader": "Enabled - batches user lookups to prevent N+1",
-                "subscriptions": "WebSocket-based real-time updates",
+                "subscriptions": "Execution primitive only; WebSocket transport is pending",
                 "introspection": "Enabled",
             },
             "example_query": 'query { users { id name email } }',
@@ -509,11 +510,11 @@ def grpc_status(request):
     """gRPC server and service status."""
     return {
         "grpc": {
-            "status": "active",
-            "port": grpc_config.port,
+            "status": "active",            "address": grpc_config.address,
             "max_message_size": grpc_config.max_message_size,
-            "reflection_enabled": grpc_config.enable_reflection,
-            "grpc_web_enabled": grpc_config.enable_grpc_web,
+            "reflection_enabled": False,
+            "grpc_web_enabled": False,
+
             "services": {
                 "cello.demo.UserService": {
                     "methods": ["GetUser", "ListUsers", "CreateUser"],
@@ -534,7 +535,7 @@ def messaging_status(request):
         "messaging": {
             "kafka": {
                 "status": "active",
-                "bootstrap_servers": kafka_config.bootstrap_servers,
+                "brokers": kafka_config.brokers,
                 "group_id": kafka_config.group_id,
                 "consumers": [
                     {"topic": "user-events", "handler": "handle_user_event"},
@@ -547,8 +548,6 @@ def messaging_status(request):
             },
             "rabbitmq": {
                 "status": "configured",
-                "exchange": rabbitmq_config.exchange,
-                "exchange_type": rabbitmq_config.exchange_type,
                 "prefetch_count": rabbitmq_config.prefetch_count,
             },
             "messages_received": len(mock_messages),
@@ -568,20 +567,20 @@ def show_config(request):
         "GraphQL": {
             "Schema": "Build from @Query, @Mutation, @Subscription decorated functions",
             "DataLoader": "Batch loading to prevent N+1 queries",
-            "Subscriptions": "Real-time updates via WebSocket transport",
+            "Subscriptions": "Execution primitive only; WebSocket transport is pending",
             "Introspection": "Schema introspection for tooling (GraphiQL, Apollo)",
         },
         "GrpcConfig": {
-            "port": "gRPC server port (default: 50051)",
+            "address": "gRPC server bind address (default: [::]:50051)",
             "max_message_size": "Maximum message size in bytes (default: 4MB)",
-            "enable_reflection": "Enable gRPC reflection service (default: True)",
-            "enable_grpc_web": "Enable gRPC-Web for browser clients (default: False)",
+            "enable_reflection": "Not exposed by the Python convenience transport",
+            "enable_grpc_web": "Not exposed by the Python convenience transport",
+
         },
         "KafkaConfig": {
-            "bootstrap_servers": "Kafka broker addresses (comma-separated)",
+            "brokers": "Kafka broker addresses",
             "group_id": "Consumer group ID",
-            "auto_offset_reset": "Where to start reading: earliest or latest",
-            "enable_auto_commit": "Auto-commit offsets (default: True)",
+            "auto_commit": "Auto-commit offsets (default: True)",
             "security_protocol": "PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL",
         },
         "RabbitMQConfig": {
@@ -612,7 +611,7 @@ if __name__ == "__main__":
     print()
     print("  GraphQL:")
     print("  - POST /graphql            - GraphQL endpoint")
-    print("  - WS   /graphql            - Subscriptions (WebSocket)")
+    print("  - WS   /graphql            - Subscription transport pending")
     print()
     print("  gRPC:")
     print("  - gRPC :50051              - UserService, OrderService")
@@ -633,5 +632,5 @@ curl http://127.0.0.1:8000/graphql/status
 ## Key Concepts
 
 - **DataLoader Pattern**: Solves the GraphQL N+1 database request issue by batching keys together into one lookup operation.
-- **Reflection Services**: Activating reflection makes gRPC services queryable by tools (like grpcurl or postman) without importing `.proto` files manually.
+- **Transport boundary**: The built-in gRPC convenience API uses JSON serializers; protobuf-generated stubs, reflection, gRPC-Web, and bidirectional streaming are pending.
 - **Auto-Acks**: Consuming tasks declare ACK/NACK results to maintain offsets and deliver messages at-least-once.
