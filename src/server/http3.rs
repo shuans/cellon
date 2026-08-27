@@ -7,12 +7,13 @@
 //! pipeline in `crate::server::handle_request` is reused unchanged.
 
 use bytes::{Buf, Bytes};
-use h3::error::ErrorLevel;
-use http::{Request as HttpRequest, Response as HttpResponse};
+use http::Response as HttpResponse;
 use hyper::{Request as HyperRequest, Response as HyperResponse};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+
+use h3::server::RequestResolver;
 
 use crate::error::ErrorHandlerRegistry;
 use crate::handler::HandlerRegistry;
@@ -50,7 +51,7 @@ pub async fn run(
     ctx: ServeCtx,
 ) -> Result<(), String> {
     use h3_quinn::quinn::{self, crypto::rustls::QuicServerConfig};
-    use rustls::pki_types::CertificateDer;
+    use rustls_quic::pki_types::CertificateDer;
     use std::fs::File;
     use std::io::BufReader;
 
@@ -71,7 +72,7 @@ pub async fn run(
         .map_err(|e| format!("failed to parse HTTP/3 private key: {e}"))?
         .ok_or_else(|| "HTTP/3 private key file contains no private key".to_string())?;
 
-    let mut tls_config = rustls::ServerConfig::builder()
+    let mut tls_config = rustls_quic::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| format!("invalid HTTP/3 certificate/key pair: {e}"))?;
@@ -119,17 +120,19 @@ pub async fn run(
                     };
                     loop {
                         match h3_conn.accept().await {
-                            Ok(Some((req, stream))) => {
+                            Ok(Some(resolver)) => {
                                 let ctx = ctx.clone();
                                 tokio::spawn(async move {
-                                    serve_stream(req, stream, &ctx).await;
+                                    serve_stream(resolver, &ctx).await;
                                 });
                             }
+                            // The remote sent a GOAWAY frame; all requests have
+                            // been processed.
                             Ok(None) => break,
-                            Err(err) => match err.get_error_level() {
-                                ErrorLevel::ConnectionError => break,
-                                _ => continue,
-                            },
+                            Err(err) => {
+                                eprintln!("HTTP/3 accept failed: {err}");
+                                break;
+                            }
                         }
                     }
                 }
@@ -145,14 +148,16 @@ pub async fn run(
 }
 
 /// Serve one HTTP/3 request through the shared request pipeline.
-async fn serve_stream<C>(
-    req: HttpRequest<()>,
-    mut stream: h3::server::RequestStream<C, Bytes>,
-    ctx: &ServeCtx,
-) where
-    C: h3::quic::BidiStream<Bytes>,
+async fn serve_stream<C>(resolver: RequestResolver<C, Bytes>, ctx: &ServeCtx)
+where
+    C: h3::quic::Connection<Bytes>,
 {
     use http_body_util::BodyExt;
+
+    let (req, mut stream) = match resolver.resolve_request().await {
+        Ok(pair) => pair,
+        Err(_) => return,
+    };
 
     let method = req.method().clone();
     let body_bytes = read_request_body(&mut stream, method.as_str()).await;
@@ -207,12 +212,9 @@ async fn serve_stream<C>(
 }
 
 /// Drain the request body from the h3 stream (empty for GET/HEAD).
-async fn read_request_body<C>(
-    stream: &mut h3::server::RequestStream<C, Bytes>,
-    method: &str,
-) -> Vec<u8>
+async fn read_request_body<S>(stream: &mut h3::server::RequestStream<S, Bytes>, method: &str) -> Vec<u8>
 where
-    C: h3::quic::BidiStream<Bytes>,
+    S: h3::quic::RecvStream,
 {
     if method == "GET" || method == "HEAD" {
         return Vec::new();
@@ -231,11 +233,11 @@ where
 }
 
 /// Stream a hyper response back over the h3 request stream.
-async fn send_response<C>(
-    mut stream: h3::server::RequestStream<C, Bytes>,
+async fn send_response<S>(
+    mut stream: h3::server::RequestStream<S, Bytes>,
     response: HyperResponse<http_body_util::Full<Bytes>>,
 ) where
-    C: h3::quic::BidiStream<Bytes>,
+    S: h3::quic::SendStream<Bytes>,
 {
     use http_body_util::BodyExt;
 

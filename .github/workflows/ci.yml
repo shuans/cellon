@@ -40,9 +40,10 @@ jobs:
         run: cargo clippy --all-targets || echo "Clippy warnings found (non-blocking)"
 
       # The `full` feature compiles the optional graphql/grpc deps; the regular
-      # maturin build does not, so check it explicitly.
+      # maturin build does not, so check it explicitly. Blocking: this is the
+      # fastest place to catch dependency/feature compile errors.
       - name: Check all features (graphql + grpc)
-        run: cargo check --features full || echo "Feature build warnings found (non-blocking)"
+        run: cargo check --features full
 
       # Rust unit tests (accept-key vectors, gRPC streaming, logging config...).
       # Non-blocking: pyo3 extension-module test binaries can fail to link on

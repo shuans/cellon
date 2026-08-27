@@ -83,12 +83,23 @@ dashmap = "5"
 quick-xml = { version = "0.31", features = ["serialize"] }
 
 # HTTP/3 (QUIC) and TLS
-# h3-quinn 0.0.7 pairs with h3 0.0.6 and quinn 0.11 (rustls 0.22), keeping a
-# single rustls version in the tree. Default quinn features enable
-# `runtime-tokio`; `futures-io` is required by h3-quinn.
-quinn = { version = "0.11", features = ["futures-io"] }
-h3 = "0.0.6"
-h3-quinn = "0.0.7"
+# h3-quinn 0.0.9+ fixed private-field usage of quinn::StreamId, so we require
+# 0.0.10 (h3 0.0.8). quinn 0.11 builds on rustls 0.23 (distinct from the
+# rustls 0.22 used by the TLS/WebSocket stack below). `futures-io` is required
+# by h3-quinn; `runtime-tokio`/`rustls`/`ring` power our QUIC endpoint.
+quinn = { version = "0.11.7", default-features = false, features = [
+    "runtime-tokio",
+    "rustls",
+    "ring",
+    "futures-io",
+] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+# rustls 0.23 for the HTTP/3 QUIC handshake (quinn 0.11 uses it internally).
+rustls-quic = { package = "rustls", version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+] }
 tokio-rustls = "0.25"
 rustls = { version = "0.22", default-features = false, features = ["ring"] }
 rustls-pemfile = "2"
