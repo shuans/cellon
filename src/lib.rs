@@ -2669,7 +2669,7 @@ fn _cello(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     // Structured logging (issue #12)
     m.add_class::<logging::LogFormat>()?;
     m.add_class::<logging::PyLoggingConfig>()?;
-    m.add_wrapped(wrap_pyfunction!(logging::configure_logging)?)?;
+    m.add_wrapped(wrap_pyfunction!(logging::configure_logging))?;
 
     Ok(())
 }

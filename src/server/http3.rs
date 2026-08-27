@@ -86,17 +86,19 @@ pub async fn run(
         QuicServerConfig::try_from(tls_config).map_err(|e| format!("invalid QUIC config: {e}"))?,
     ));
 
-    // Apply the Http3Config to the QUIC transport.
+    // Apply the Http3Config to the QUIC transport (quinn 0.11 API).
     let mut transport = quinn::TransportConfig::default();
     let varint = |value: u64| quinn::VarInt::from_u64(value).unwrap_or_default();
-    transport.max_idle_timeout(Some(varint(config.max_idle_timeout.as_secs())));
-    transport.max_udp_payload_size(config.max_udp_payload_size);
-    transport.initial_max_data(varint(config.initial_max_data));
-    transport.initial_max_stream_data_bidi_local(varint(config.initial_max_stream_data_bidi));
-    transport.initial_max_stream_data_bidi_remote(varint(config.initial_max_stream_data_bidi));
-    transport.initial_max_stream_data_uni(varint(config.initial_max_stream_data_uni));
-    transport.initial_max_streams_bidi(varint(config.initial_max_streams_bidi));
-    transport.initial_max_streams_uni(varint(config.initial_max_streams_uni));
+    // RFC 9000 idle timeouts are expressed in milliseconds.
+    let idle_ms = config.max_idle_timeout.as_millis().min(u64::MAX as u128) as u64;
+    transport.max_idle_timeout(Some(varint(idle_ms).into()));
+    transport.initial_mtu(config.max_udp_payload_size);
+    transport.receive_window(varint(config.initial_max_data));
+    transport.stream_receive_window(varint(
+        config.initial_max_stream_data_bidi.max(config.initial_max_stream_data_uni),
+    ));
+    transport.max_concurrent_bidi_streams(varint(config.initial_max_streams_bidi));
+    transport.max_concurrent_uni_streams(varint(config.initial_max_streams_uni));
     server_config.transport_config(Arc::new(transport));
 
     let endpoint = quinn::Endpoint::server(server_config, addr)
@@ -152,8 +154,6 @@ async fn serve_stream<C>(resolver: RequestResolver<C, Bytes>, ctx: &ServeCtx)
 where
     C: h3::quic::Connection<Bytes>,
 {
-    use http_body_util::BodyExt;
-
     let (req, mut stream) = match resolver.resolve_request().await {
         Ok(pair) => pair,
         Err(_) => return,
@@ -162,13 +162,9 @@ where
     let method = req.method().clone();
     let body_bytes = read_request_body(&mut stream, method.as_str()).await;
 
-    // Feed the body through a public hyper body channel so the shared
-    // `handle_request` pipeline can stream it like any other request body.
-    let (mut tx, body) = hyper::body::Body::channel();
-    if !body_bytes.is_empty() {
-        let _ = tx.send_data(Bytes::from(body_bytes)).await;
-    }
-    tx.close();
+    // The whole body is buffered above, so a completed `Full` body is enough
+    // for the shared `handle_request` pipeline.
+    let body = http_body_util::Full::new(Bytes::from(body_bytes));
 
     let mut builder = HyperRequest::builder().method(method).uri(req.uri().clone());
     for (key, value) in req.headers() {

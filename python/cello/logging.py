@@ -8,7 +8,7 @@ Example:
     from cello.logging import configure_logging, LogFormat
 
     configure_logging(
-        format=LogFormat.JSON,
+        format=LogFormat.Json,
         level="INFO",
         include_trace_context=True,
         exclude_paths=["/health", "/metrics"],
@@ -40,7 +40,7 @@ def configure_logging(
     Args:
         config: A ``LoggingConfig`` instance. When given, all keyword
             arguments are ignored.
-        format: ``LogFormat.JSON`` or ``LogFormat.TEXT``.
+        format: ``LogFormat.Json`` or ``LogFormat.Text``.
         level: Minimum level to emit: "trace", "debug", "info", "warn",
             or "error".
         include_trace_context: Attach ``trace_id``/``span_id`` fields when
@@ -53,7 +53,7 @@ def configure_logging(
         _configure_logging_native(config)
         return
 
-    resolved_format = format if format is not None else LogFormat.TEXT
+    resolved_format = format if format is not None else LogFormat.Text
     _configure_logging_native(
         LoggingConfig(
             format=resolved_format,

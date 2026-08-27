@@ -15,7 +15,7 @@ from cello.logging import LogFormat
 
 app = App()
 app.configure_logging(
-    format=LogFormat.JSON,      # or LogFormat.TEXT / "json" / "text"
+    format=LogFormat.Json,      # or LogFormat.Text / "json" / "text"
     level="INFO",
     include_trace_context=True, # attach trace_id/span_id when present
     exclude_paths=["/health", "/metrics"],
@@ -23,7 +23,7 @@ app.configure_logging(
 app.enable_logging()
 ```
 
-With `LogFormat.JSON`, each access log is one JSON object per line (ELK/Loki
+With `LogFormat.Json`, each access log is one JSON object per line (ELK/Loki
 friendly):
 
 ```json

@@ -749,7 +749,7 @@ class App:
         Configure global structured logging (text or JSON) and the access log.
 
         Args:
-            format: ``LogFormat.JSON``, ``LogFormat.TEXT``, or a string
+            format: ``LogFormat.Json``, ``LogFormat.Text``, or a string
                 (``"json"`` / ``"text"``).
             level: Minimum level: "trace", "debug", "info", "warn", "error".
             include_trace_context: Attach trace/span ids when present.
@@ -761,7 +761,7 @@ class App:
             from cello.logging import LogFormat
 
             app.configure_logging(
-                format=LogFormat.JSON,
+                format=LogFormat.Json,
                 level="INFO",
                 exclude_paths=["/health", "/metrics"],
             )
@@ -773,9 +773,9 @@ class App:
         if isinstance(format, str):
             lowered = format.lower()
             if lowered == "json":
-                format = _LogFormat.JSON
+                format = _LogFormat.Json
             elif lowered == "text":
-                format = _LogFormat.TEXT
+                format = _LogFormat.Text
             else:
                 raise ValueError(f"Unknown log format: {format!r} (expected 'json' or 'text')")
         _configure_logging(

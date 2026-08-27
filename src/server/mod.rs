@@ -739,6 +739,11 @@ impl Server {
                                     let req_handler_timeout = conn_handler_timeout;
 
                                     async move {
+                                        // Rebind as mutable: the WebSocket upgrade path
+                                        // needs `&mut req` to extract the OnUpgrade
+                                        // future from the request extensions.
+                                        let mut req = req;
+
                                         // WebSocket upgrade fast-path: the handshake is
                                         // answered with 101 and the session is spawned
                                         // before any Request allocation or routing.
@@ -876,7 +881,13 @@ async fn handle_websocket_upgrade(
     let key = crate::websocket::websocket_key(req.headers())?;
     let handler = registry.get(req.uri().path())?;
     let accept = crate::websocket::accept_key(&key);
-    let on_upgrade = hyper::upgrade::on(req).ok()?;
+    // Take the OnUpgrade future out of the request extensions. Unlike
+    // `hyper::upgrade::on`, this does not panic when the extension is missing
+    // (e.g. on HTTP/2 connections, which cannot be upgraded this way).
+    let on_upgrade = match req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>() {
+        Some(upgrade) => upgrade,
+        None => return None,
+    };
 
     let resp = HyperResponse::builder()
         .status(StatusCode::SWITCHING_PROTOCOLS)

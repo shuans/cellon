@@ -11,14 +11,18 @@ from cello._cello import configure_logging as configure_logging_native
 
 
 def test_log_format_enum():
-    assert LogFormat.TEXT != LogFormat.JSON
-    assert isinstance(LogFormat.TEXT, LogFormat)
-    assert isinstance(LogFormat.JSON, LogFormat)
+    # pyo3 0.20 exposes enum variants verbatim with `.name`; instances are
+    # not cached, so compare names rather than identity.
+    assert LogFormat.Text.name == "Text"
+    assert LogFormat.Json.name == "Json"
+    assert LogFormat.Text.name != LogFormat.Json.name
+    assert isinstance(LogFormat.Text, LogFormat)
+    assert isinstance(LogFormat.Json, LogFormat)
 
 
 def test_logging_config_defaults():
     config = LoggingConfig()
-    assert config.format == LogFormat.TEXT
+    assert config.format.name == "Text"
     assert config.level == "info"
     assert config.include_trace_context is True
     assert config.exclude_paths == []
@@ -26,14 +30,14 @@ def test_logging_config_defaults():
 
 def test_logging_config_kwargs():
     config = LoggingConfig(
-        format=LogFormat.JSON,
+        format=LogFormat.Json,
         level="debug",
         include_trace_context=False,
         exclude_paths=["/health", "/metrics"],
         log_body=True,
         log_headers=True,
     )
-    assert config.format == LogFormat.JSON
+    assert config.format.name == "Json"
     assert config.level == "debug"
     assert config.include_trace_context is False
     assert config.exclude_paths == ["/health", "/metrics"]
@@ -43,16 +47,16 @@ def test_logging_config_kwargs():
 
 def test_logging_config_mutation():
     config = LoggingConfig()
-    config.format = LogFormat.JSON
+    config.format = LogFormat.Json
     config.level = "warn"
-    assert config.format == LogFormat.JSON
+    assert config.format.name == "Json"
     assert config.level == "warn"
 
 
 def test_configure_logging_accepts_config():
     # Idempotent; a subscriber may already be installed, but the call must not
     # raise.
-    config = LoggingConfig(format=LogFormat.JSON, level="info", exclude_paths=["/health"])
+    config = LoggingConfig(format=LogFormat.Json, level="info", exclude_paths=["/health"])
     configure_logging_native(config)
     configure_logging_native(config)
 
@@ -60,7 +64,7 @@ def test_configure_logging_accepts_config():
 def test_configure_logging_kwargs():
     configure_logging_native(
         LoggingConfig(
-            format=LogFormat.TEXT,
+            format=LogFormat.Text,
             level="error",
             include_trace_context=True,
             exclude_paths=None,
@@ -92,7 +96,7 @@ def test_app_configure_logging_with_log_format_enum():
 
     app = App()
     app.configure_logging(
-        format=PyLogFormat.JSON,
+        format=PyLogFormat.Json,
         level="debug",
         include_trace_context=True,
         exclude_paths=["/metrics"],
@@ -104,7 +108,8 @@ def test_app_configure_logging_with_log_format_enum():
 def test_cello_logging_module():
     from cello.logging import LogFormat as ModuleLogFormat, configure_logging, get_logger
 
-    assert ModuleLogFormat.JSON is LogFormat.JSON
-    configure_logging(format=ModuleLogFormat.JSON, level="info")
+    assert ModuleLogFormat is LogFormat
+    assert ModuleLogFormat.Json.name == LogFormat.Json.name
+    configure_logging(format=ModuleLogFormat.Json, level="info")
     logger = get_logger("test")
     assert logger.name == "test"
