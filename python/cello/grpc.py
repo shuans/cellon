@@ -46,8 +46,24 @@ class GrpcError(Exception):
         return f"GrpcError(code={self.code}, message={self.message!r}, details={self.details!r})"
 
 
-def grpc_method(func: Callable = None, *, stream: bool = False) -> Callable:
-    """Mark a service method as a unary or server-streaming RPC."""
+def grpc_method(
+    func: Callable = None,
+    *,
+    stream: bool = False,
+    client_stream: bool = False,
+    bidi: bool = False,
+) -> Callable:
+    """Mark a service method as an RPC of a given cardinality.
+
+    Args:
+        stream: Server streaming — single request, many responses.
+        client_stream: Client streaming — many requests, single response.
+        bidi: Bidirectional streaming — many requests, many responses.
+            Implies both streaming directions.
+
+    Streaming methods receive an async iterator of :class:`GrpcRequest` and
+    return (or yield) one or more :class:`GrpcResponse` / dict values.
+    """
 
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
@@ -56,7 +72,9 @@ def grpc_method(func: Callable = None, *, stream: bool = False) -> Callable:
 
         wrapper._grpc_method = True
         wrapper._grpc_method_name = fn.__name__
-        wrapper._grpc_stream = stream
+        wrapper._grpc_stream = bool(stream) or bool(bidi)
+        wrapper._grpc_client_stream = bool(client_stream) or bool(bidi)
+        wrapper._grpc_bidi = bool(bidi)
         return wrapper
 
     return decorator(func) if func is not None else decorator
@@ -165,7 +183,20 @@ class GrpcService:
                     "name": attr._grpc_method_name,
                     "handler": attr,
                     "stream": bool(attr._grpc_stream),
+                    "client_stream": bool(attr._grpc_client_stream),
+                    "bidi": bool(attr._grpc_bidi),
                 }
+
+    def get_methods(self) -> list[dict]:
+        return [
+            {
+                "name": info["name"],
+                "stream": info["stream"],
+                "client_stream": info["client_stream"],
+                "bidi": info["bidi"],
+            }
+            for info in self._methods.values()
+        ]
 
     def get_methods(self) -> list[dict]:
         return [
@@ -305,13 +336,79 @@ class GrpcServer:
             return value.data
         return value
 
+    async def _invoke_stream(
+        self,
+        service_name: str,
+        method_name: str,
+        request_iter,
+        context,
+    ) -> Any:
+        """Invoke a client-streaming or bidi method with a request iterator.
+
+        The handler receives an async iterator of :class:`GrpcRequest` objects
+        (one per incoming message) and may return a single value (client
+        streaming) or yield responses (bidirectional streaming).
+        """
+        service = self._services.get(service_name)
+        if service is None:
+            await context.abort(self._grpc.StatusCode.NOT_FOUND, f"Service '{service_name}' was not found")
+            return None
+        method_info = service._methods.get(method_name)
+        if method_info is None:
+            await context.abort(
+                self._grpc.StatusCode.UNIMPLEMENTED, f"Method '{method_name}' was not found"
+            )
+            return None
+
+        async def request_stream():
+            async for request in request_iter:
+                try:
+                    yield GrpcRequest(
+                        service_name,
+                        method_name,
+                        _json_loads(request),
+                        _metadata_dict(context),
+                    )
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                    await context.abort(self._grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+                    return
+
+        value = method_info["handler"](request_stream())
+        if inspect.isawaitable(value):
+            value = await value
+        return value
+
     def _build_handlers(self):
         handlers = {}
         for service_name, service in self._services.items():
             method_handlers = {}
             for method_name, method_info in service._methods.items():
                 path_service = service_name
-                if method_info["stream"]:
+                if method_info.get("bidi"):
+                    async def bidi_handler(request_iterator, context, _service=path_service, _method=method_name):
+                        value = await self._invoke_stream(_service, _method, request_iterator, context)
+                        if hasattr(value, "__aiter__"):
+                            async for item in value:
+                                yield item.data if isinstance(item, GrpcResponse) else item
+                        elif value is not None:
+                            yield value.data if isinstance(value, GrpcResponse) else value
+
+                    method_handlers[method_name] = self._grpc.stream_stream_rpc_method_handler(
+                        bidi_handler,
+                        request_deserializer=lambda data: data,
+                        response_serializer=_json_dumps,
+                    )
+                elif method_info.get("client_stream"):
+                    async def client_stream_handler(request_iterator, context, _service=path_service, _method=method_name):
+                        value = await self._invoke_stream(_service, _method, request_iterator, context)
+                        return value.data if isinstance(value, GrpcResponse) else value
+
+                    method_handlers[method_name] = self._grpc.stream_unary_rpc_method_handler(
+                        client_stream_handler,
+                        request_deserializer=lambda data: data,
+                        response_serializer=_json_dumps,
+                    )
+                elif method_info.get("stream"):
                     async def stream_handler(request, context, _service=path_service, _method=method_name):
                         try:
                             payload = _json_loads(request)
@@ -379,6 +476,18 @@ class GrpcServer:
         self._server = grpc.aio.server(options=options)
         for handler in self._build_handlers().values():
             self._server.add_generic_rpc_handlers((handler,))
+
+        # gRPC server reflection (service discovery, grpcurl --plaintext).
+        if getattr(self._config, "reflection", False):
+            try:
+                from grpc_reflection.v1alpha import reflection
+
+                reflection.enable_server_reflection(list(self._services.keys()), self._server)
+            except ImportError:
+                print(
+                    "Warning: gRPC reflection requires the 'grpcio-reflection' package; "
+                    "install it (pip install grpcio-reflection) to enable it."
+                )
 
         requested_address = self._address
         bound_port = self._server.add_insecure_port(requested_address)
@@ -515,6 +624,199 @@ class GrpcChannel:
 async def asyncio_wait_for_channel_ready(channel, timeout: float = 5.0) -> None:
     """Wait for a channel to connect without relying on deprecated loop APIs."""
     await asyncio.wait_for(channel.channel_ready(), timeout=timeout)
+
+
+# ============================================================================
+# gRPC-Web bridge (browser clients over HTTP/1.1)
+# ============================================================================
+
+#: gRPC-Web trailing frame flag for trailers (0x80).
+_GRPC_WEB_TRAILERS_FLAG = 0x80
+
+
+def _frame_message(payload: bytes) -> bytes:
+    """Wrap a payload in a gRPC-Web data frame (1 flag byte + 4-byte length)."""
+    return b"\x00" + len(payload).to_bytes(4, "big") + payload
+
+
+def _unframe_messages(data: bytes) -> list[bytes]:
+    """Split a gRPC-Web frame stream into its payloads.
+
+    Each frame is 1 flag byte + 4-byte big-endian length + payload. Trailer
+    frames (flag 0x80) are returned as-is and are typically the last frame.
+    """
+    messages: list[bytes] = []
+    offset = 0
+    while offset < len(data):
+        if offset + 5 > len(data):
+            break
+        flag = data[offset]
+        length = int.from_bytes(data[offset + 1 : offset + 5], "big")
+        offset += 5
+        if offset + length > len(data):
+            break
+        messages.append(data[offset : offset + length])
+        offset += length
+        if flag & _GRPC_WEB_TRAILERS_FLAG:
+            break
+    return messages
+
+
+def _grpc_web_status(payload: bytes) -> int:
+    """Parse a gRPC-Web trailer frame and return the ``grpc-status`` value."""
+    try:
+        trailers = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return GrpcError.INTERNAL
+    status = GrpcError.OK
+    for line in trailers.split("\r\n"):
+        if line.startswith("grpc-status:") and line[12:].strip().isdigit():
+            status = int(line[12:].strip())
+    return status
+
+
+def grpc_web_request_handler(server: "GrpcServer"):
+    """Return an async HTTP handler that bridges gRPC-Web frames to a service.
+
+    The handler is bound to one ``/service/method`` path and speaks the
+    gRPC-Web framing (5-byte prefix, JSON payloads for this generic API) over
+    plain HTTP/1.1 so browser clients (``@grpc/grpc-js``, ``grpc-web``) can
+    call the server without HTTP/2.
+    """
+
+    async def handler(request):
+        content_type = request.get_header("content-type") or ""
+        data = request.body() or b""
+        if "text" in content_type:
+            import base64
+
+            try:
+                data = base64.b64decode(data)
+            except (ValueError, TypeError) as exc:
+                return _grpc_web_error(GrpcError.INVALID_ARGUMENT, str(exc))
+        payloads = _unframe_messages(data)
+        if not payloads:
+            return _grpc_web_error(GrpcError.INVALID_ARGUMENT, "empty gRPC-Web request")
+
+        service, method = _grpc_web_service_method(request.path)
+        try:
+            payload = json.loads(payloads[-1].decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("gRPC-Web JSON request must be an object")
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            return _grpc_web_error(GrpcError.INVALID_ARGUMENT, str(exc))
+
+        try:
+            value = await server.dispatch(service, method, GrpcRequest(service, method, payload))
+        except GrpcError as exc:
+            return _grpc_web_error(exc.code, exc.message)
+
+        body = _json_dumps(value.data if isinstance(value, GrpcResponse) else value)
+        return _grpc_web_ok(body)
+
+    return handler
+
+
+def _grpc_web_service_method(path: str) -> tuple[str, str]:
+    """Split ``/prefix/package.Service/Method`` into (service, method).
+
+    Uses the last two path segments so any configured gRPC-Web prefix works.
+    """
+    parts = path.strip("/").split("/")
+    if len(parts) < 2:
+        return path.strip("/"), ""
+    return parts[-2], parts[-1]
+
+
+def _grpc_web_ok(body: bytes) -> "Any":
+    """Build a successful gRPC-Web response with a data frame."""
+    from cello import Response
+
+    framed = _frame_message(body)
+    response = Response.binary(framed, "application/grpc-web+json", 200)
+    response.set_header("grpc-status", "0")
+    response.set_header("grpc-message", "OK")
+    return response
+
+
+def _grpc_web_error(code: int, message: str) -> "Any":
+    """Build a gRPC-Web error response carrying a trailer frame."""
+    from cello import Response
+
+    trailers = f"grpc-status: {code}\r\ngrpc-message: {message}\r\n".encode("utf-8")
+    framed = bytes([_GRPC_WEB_TRAILERS_FLAG]) + len(trailers).to_bytes(4, "big") + trailers
+    response = Response.binary(framed, "application/grpc-web+json", 200)
+    response.set_header("grpc-status", str(code))
+    response.set_header("grpc-message", message)
+    return response
+
+
+# ============================================================================
+# Protobuf codec (wire-compatible messages)
+# ============================================================================
+
+
+class ProtobufCodec:
+    """Encode/decode protobuf messages for the generic gRPC transport.
+
+    Pass a ``google.protobuf`` message class (generated or from
+    ``descriptor_pb2``) to serialize dict payloads to the protobuf wire format
+    and back, so the JSON generic API can talk to protobuf-generated stubs.
+
+    Example:
+        from echo_pb2 import EchoRequest, EchoResponse
+
+        codec = ProtobufCodec(EchoRequest, EchoResponse)
+        wire = codec.encode({"message": "hello"})
+        decoded = codec.decode(wire)
+    """
+
+    def __init__(self, request_type=None, response_type=None):
+        self._request_type = request_type
+        self._response_type = response_type
+
+    def encode(self, value: Any, message_type=None) -> bytes:
+        """Serialize a dict (or GrpcResponse payload) to protobuf bytes."""
+        if isinstance(value, GrpcResponse):
+            value = value.data
+        message_type = message_type or self._request_type
+        if message_type is None:
+            return _json_dumps(value)
+        try:
+            from google.protobuf.json_format import ParseDict
+        except ImportError as exc:
+            raise RuntimeError("ProtobufCodec requires the 'protobuf' package") from exc
+        message = message_type()
+        ParseDict(value if value is not None else {}, message)
+        return message.SerializeToString()
+
+    def decode(self, data: bytes, message_type=None) -> Any:
+        """Parse protobuf bytes into a dict."""
+        message_type = message_type or self._response_type
+        if message_type is None:
+            return _json_loads(data)
+        try:
+            from google.protobuf.json_format import MessageToDict
+        except ImportError as exc:
+            raise RuntimeError("ProtobufCodec requires the 'protobuf' package") from exc
+        message = message_type()
+        message.ParseFromString(data)
+        return MessageToDict(message)
+
+
+__all__ = [
+    "GrpcError",
+    "GrpcRequest",
+    "GrpcResponse",
+    "GrpcService",
+    "GrpcServer",
+    "GrpcChannel",
+    "grpc_method",
+    "ProtobufCodec",
+    "grpc_web_request_handler",
+    "_frame_message",
+    "_unframe_messages",
+]
 
 
 def _status_code(status) -> int:

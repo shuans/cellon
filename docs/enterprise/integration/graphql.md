@@ -77,6 +77,32 @@ async def book_added(info):
         yield event
 ```
 
+### WebSocket Subscriptions (graphql-ws)
+
+Mounting GraphQL automatically registers a WebSocket endpoint on the same path
+speaking the [graphql-ws](https://github.com/enisdenjo/graphql-ws) protocol, so
+clients can subscribe in realtime:
+
+```python
+app.mount_graphql(Schema().subscription(book_added).build(), path="/graphql")
+```
+
+Connect with any graphql-ws client:
+
+```javascript
+import { createClient } from "graphql-ws";
+
+const client = createClient({ url: "ws://localhost:8000/graphql" });
+client.subscribe(
+  { query: "subscription { bookAdded { title } }" },
+  { next: (payload) => console.log(payload) }
+);
+```
+
+The server handles `connection_init` → `connection_ack`, `subscribe` →
+`next`/`complete`, `complete` (cancellation), `ping`/`pong`, and
+`connection_terminate`.
+
 ## DataLoader
 
 Prevents N+1 query problems by batching and caching database calls.

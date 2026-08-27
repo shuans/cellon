@@ -57,6 +57,34 @@ ws.onopen = () => ws.send("Hello!");
 
 ---
 
+## Async Handlers (recommended)
+
+WebSocket routes are **real connections**: the server answers the RFC 6455
+handshake (sha1 `Sec-WebSocket-Accept`), then runs `tokio-tungstenite` with a
+tokio channel pair per connection. Use `async def` handlers for production code:
+
+```python
+@app.websocket("/ws")
+async def echo(ws):
+    await ws.accept()
+    await ws.send_text("Connected!")
+    while True:
+        msg = await ws.receive_text()
+        if msg is None:
+            break
+        await ws.send_json({"echo": msg})
+```
+
+Async methods: `accept()`, `receive()`, `receive_text()`, `receive_json()`,
+`receive_binary()`, plus the synchronous `send_text()` / `send_binary()` /
+`send_json()` / `send()` / `recv()` / `close()` helpers. `receive_*` returns
+`None` when the peer disconnects.
+
+The sync-style API (from Quick Start above) remains fully supported for simple
+or callback-style handlers.
+
+---
+
 ## The `@app.websocket()` Decorator
 
 Register a WebSocket endpoint at a given path:

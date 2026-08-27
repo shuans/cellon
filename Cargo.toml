@@ -29,6 +29,7 @@ reqwest = { version = "0.11", features = ["rustls-tls", "gzip"], default-feature
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
+http-body = "1"
 
 # Socket configuration (SO_REUSEPORT for multi-process)
 socket2 = { version = "0.5", features = ["all"] }
@@ -36,6 +37,7 @@ socket2 = { version = "0.5", features = ["all"] }
 # WebSocket support
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
+sha1 = "0.10"  # RFC 6455 Sec-WebSocket-Accept handshake
 
 # Routing
 matchit = "0.7"
@@ -81,7 +83,12 @@ dashmap = "5"
 quick-xml = { version = "0.31", features = ["serialize"] }
 
 # HTTP/3 (QUIC) and TLS
-quinn = "0.10"
+# h3-quinn 0.0.7 pairs with h3 0.0.6 and quinn 0.11 (rustls 0.22), keeping a
+# single rustls version in the tree. Default quinn features enable
+# `runtime-tokio`; `futures-io` is required by h3-quinn.
+quinn = { version = "0.11", features = ["futures-io"] }
+h3 = "0.0.6"
+h3-quinn = "0.0.7"
 tokio-rustls = "0.25"
 rustls = { version = "0.22", default-features = false, features = ["ring"] }
 rustls-pemfile = "2"

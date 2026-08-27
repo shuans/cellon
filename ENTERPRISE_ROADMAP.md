@@ -16,7 +16,7 @@ Cello aims to be a comprehensive, performant, and secure Python web framework fo
 | SIMD JSON | ✅ |
 | Zero-copy requests | ✅ |
 | HTTP/2 | ✅ |
-| HTTP/3 (QUIC) | 🔲 |
+| HTTP/3 (QUIC) | ✅ |
 | **Routing** | |
 | Radix tree routing | ✅ |
 | Route constraints | ✅ |
@@ -42,8 +42,8 @@ Cello aims to be a comprehensive, performant, and secure Python web framework fo
 | Health Checks | ✅ |
 | **API Protocols** | |
 | REST | ✅ |
-| GraphQL (HTTP query/mutation) | ✅ |
-| gRPC (JSON generic HTTP/2 transport) | ✅ |
+| GraphQL (HTTP + WebSocket subscriptions) | ✅ |
+| gRPC (streaming, reflection, gRPC-Web) | ✅ |
 | WebSocket | ✅ |
 | SSE | ✅ |
 | **Database** | |
@@ -197,11 +197,12 @@ async def transfer(request, db=Depends(get_db)):
 
 ### v0.9.0 - API Protocols (Released February 2026) :white_check_mark:
 
-#### GraphQL Support (partial)
+#### GraphQL Support
 - Python decorator/schema builder
 - HTTP GET/POST query and mutation execution
+- graphql-ws WebSocket subscription transport (subscribe/next/complete, ping/pong)
 - Limited introspection and explicit DataLoader
-- WebSocket subscription transport, federation, and full schema validation remain pending
+- Federation and full schema validation remain pending
 
 ```python
 from cello.graphql import Query, Mutation, Subscription, Schema, DataLoader
@@ -227,11 +228,12 @@ schema = Schema(
 app.mount_graphql(schema)
 ```
 
-#### gRPC Support (partial)
+#### gRPC Support
 - Real `grpc.aio` HTTP/2 generic transport
-- JSON payload serialization for the Python convenience API
-- Unary and server-streaming calls
-- Protobuf-generated stubs, bidirectional streaming, gRPC-Web, and reflection remain pending
+- JSON payload serialization for the Python convenience API (protobuf codec available)
+- Unary, server-streaming, client-streaming, and bidirectional streaming calls
+- gRPC server reflection (`grpcio-reflection`) and a gRPC-Web HTTP/1.1 bridge
+- Protobuf-generated stubs remain a generated-code concern (wire-compatible via `ProtobufCodec`)
 
 ```python
 from cello.grpc import GrpcService, grpc_method, GrpcConfig, GrpcRequest, GrpcResponse

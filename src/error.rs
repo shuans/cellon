@@ -463,10 +463,21 @@ impl ErrorHandlerRegistry {
             }
         }
 
-        // Try exception-type handler for Python exceptions
+        // Try exception-type handler for Python exceptions.
+        //
+        // Python 3.12 exposes the fully-qualified type name (e.g.
+        // `cello.exceptions.NotFoundError`) via `PyType::name()`, so match both
+        // the full name and its last component (the plain class name that users
+        // pass to `register_exception_handler` / `@app.exception_handler`).
         if let AppError::PythonException(info) = error {
-            if let Some(handler) = self.exception_handlers.read().get(&info.exception_type) {
+            let exception_handlers = self.exception_handlers.read();
+            if let Some(handler) = exception_handlers.get(&info.exception_type) {
                 return handler.handle(error, request);
+            }
+            if let Some(short) = info.exception_type.rsplit('.').next() {
+                if let Some(handler) = exception_handlers.get(short) {
+                    return handler.handle(error, request);
+                }
             }
         }
 

@@ -9,6 +9,7 @@
 //! - Server metrics
 
 pub mod cluster;
+pub mod http3;
 pub mod protocols;
 
 use bytes::Bytes;
@@ -574,7 +575,7 @@ impl Server {
         let router = Arc::new(self.router);
         let handlers = Arc::new(self.handlers);
         let middleware = Arc::new(self.middleware);
-        let _websocket_handlers = Arc::new(self.websocket_handlers);
+        let websocket_handlers = Arc::new(self.websocket_handlers);
         let metrics = Arc::new(self.metrics);
         let shutdown = Arc::new(self.shutdown);
         let dependency_container = self.dependency_container.clone();
@@ -589,6 +590,44 @@ impl Server {
         let read_header_timeout = self.config.read_header_timeout;
         let handler_timeout = self.config.handler_timeout;
         let http2_config = self.config.http2.clone();
+
+        // HTTP/3 (QUIC): bind a UDP endpoint on the same host:port when
+        // configured. HTTP/3 mandates TLS 1.3, so the TLS certificate/key from
+        // `enable_tls` are reused for the QUIC handshake.
+        if let (Some(http3_config), Some(tls_config)) =
+            (self.config.http3.clone(), self.config.tls.clone())
+        {
+            let h3_addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
+                .parse()
+                .map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid HTTP/3 address: {e}"
+                    ))
+                })?;
+            let h3_ctx = http3::ServeCtx {
+                router: router.clone(),
+                handlers: handlers.clone(),
+                middleware: middleware.clone(),
+                metrics: metrics.clone(),
+                shutdown: shutdown.clone(),
+                dependency_container: dependency_container.clone(),
+                guards: guards.clone(),
+                prometheus: prometheus.clone(),
+                error_handlers: error_handlers.clone(),
+                max_body_size,
+                read_body_timeout,
+                handler_timeout,
+            };
+            let h3_cert = tls_config.cert_path.to_string_lossy().into_owned();
+            let h3_key = tls_config.key_path.to_string_lossy().into_owned();
+            tokio::spawn(async move {
+                if let Err(err) =
+                    http3::run(&http3_config, &h3_cert, &h3_key, h3_addr, h3_ctx).await
+                {
+                    eprintln!("HTTP/3 server error: {err}");
+                }
+            });
+        }
 
         let mut shutdown_rx = shutdown.subscribe();
 
@@ -649,6 +688,8 @@ impl Server {
                             let router = router.clone();
                             let handlers = handlers.clone();
                             let middleware = middleware.clone();
+                            let websocket_handlers = websocket_handlers.clone();
+                            let peer_str = peer_addr.to_string();
                             let metrics_for_service = metrics.clone();
                             let metrics_for_cleanup = metrics.clone();
                             let shutdown = shutdown.clone();
@@ -674,6 +715,8 @@ impl Server {
                                 let conn_error_handlers = error_handlers;
                                 let conn_tls_acceptor = tls_acceptor;
                                 let conn_http2_config = http2_config;
+                                let conn_ws_handlers = websocket_handlers;
+                                let conn_peer = peer_str;
                                 // Copy limit/timeout config (all Copy) into the connection scope.
                                 let conn_max_body_size = max_body_size;
                                 let conn_read_body_timeout = read_body_timeout;
@@ -689,11 +732,31 @@ impl Server {
                                     let guards = conn_guards.clone();
                                     let prometheus = conn_prometheus.clone();
                                     let error_handlers = conn_error_handlers.clone();
+                                    let ws_handlers = conn_ws_handlers.clone();
+                                    let peer_str = conn_peer.clone();
                                     let req_max_body_size = conn_max_body_size;
                                     let req_read_body_timeout = conn_read_body_timeout;
                                     let req_handler_timeout = conn_handler_timeout;
 
                                     async move {
+                                        // WebSocket upgrade fast-path: the handshake is
+                                        // answered with 101 and the session is spawned
+                                        // before any Request allocation or routing.
+                                        if req.method() == hyper::Method::GET
+                                            && crate::websocket::is_websocket_upgrade(req.headers())
+                                            && ws_handlers.contains(req.uri().path())
+                                        {
+                                            if let Some(resp) = handle_websocket_upgrade(
+                                                &mut req,
+                                                &ws_handlers,
+                                                peer_str,
+                                            )
+                                            .await
+                                            {
+                                                return Ok(resp);
+                                            }
+                                        }
+
                                         shutdown.request_started();
                                         let start = Instant::now();
 
@@ -799,14 +862,54 @@ impl Server {
     }
 }
 
+/// Answer a WebSocket upgrade handshake (RFC 6455) and run the registered
+/// Python handler over a `tokio-tungstenite` session.
+///
+/// Returns `Some(101 Switching Protocols)` once the session has been spawned.
+/// Returns `None` when the request is not a valid handshake or no handler is
+/// registered for the path, so the caller can fall through to normal handling.
+async fn handle_websocket_upgrade(
+    req: &mut HyperRequest<Incoming>,
+    registry: &Arc<WebSocketRegistry>,
+    peer: String,
+) -> Option<HyperResponse<Full<Bytes>>> {
+    let key = crate::websocket::websocket_key(req.headers())?;
+    let handler = registry.get(req.uri().path())?;
+    let accept = crate::websocket::accept_key(&key);
+    let on_upgrade = hyper::upgrade::on(req).ok()?;
+
+    let resp = HyperResponse::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(hyper::header::UPGRADE, "websocket")
+        .header(hyper::header::CONNECTION, "Upgrade")
+        .header("Sec-WebSocket-Accept", accept)
+        .body(Full::new(Bytes::new()))
+        .ok()?;
+
+    tokio::spawn(async move {
+        match on_upgrade.await {
+            Ok(upgraded) => {
+                crate::websocket::run_session(upgraded, handler, peer).await;
+            }
+            Err(err) => {
+                eprintln!("WebSocket upgrade failed: {err}");
+            }
+        }
+    });
+
+    Some(resp)
+}
+
 /// Serve a request whose path did not match any route but is claimed by a
 /// path-owning middleware (health checks, GraphQL, …). Builds a `Request`
 /// (including body for POST-style endpoints) and runs only the middleware that
 /// reported `serves_unrouted() == true`. Returns `Some(response)` if one of
 /// them served the request, `None` to fall through to a 404.
+///
+/// Generic over the body so the HTTP/3 (QUIC) path can reuse the same logic.
 #[allow(clippy::too_many_arguments)]
-async fn serve_unrouted(
-    req: HyperRequest<Incoming>,
+async fn serve_unrouted<B>(
+    req: HyperRequest<B>,
     method_str: &str,
     uri: &hyper::Uri,
     path: &str,
@@ -814,7 +917,11 @@ async fn serve_unrouted(
     metrics: &Arc<ServerMetrics>,
     max_body_size: usize,
     read_body_timeout: Option<Duration>,
-) -> Option<Response> {
+) -> Option<Response>
+where
+    B: http_body::Body<Data = Bytes> + Unpin + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     // Copy headers before the body is consumed.
     let mut headers: HashMap<String, String> = HashMap::with_capacity(req.headers().len());
     for (k, v) in req.headers().iter() {
@@ -909,8 +1016,13 @@ async fn serve_unrouted(
     }
 }
 
-async fn handle_request(
-    req: HyperRequest<Incoming>,
+/// Route and serve a single request through the full pipeline (middleware,
+/// guards, handler, Prometheus, error handling).
+///
+/// Generic over the body type so both hyper HTTP/1.1|2 (`Incoming`) and the
+/// HTTP/3 QUIC path (a constructed `hyper::body::Body`) share this logic.
+pub(crate) async fn handle_request<B>(
+    req: HyperRequest<B>,
     router: &Arc<Router>,
     handlers: &Arc<HandlerRegistry>,
     middleware: &Arc<MiddlewareChain>,
@@ -924,7 +1036,11 @@ async fn handle_request(
     max_body_size: usize,
     read_body_timeout: Option<Duration>,
     handler_timeout: Option<Duration>,
-) -> Result<HyperResponse<Full<Bytes>>, Infallible> {
+) -> Result<HyperResponse<Full<Bytes>>, Infallible>
+where
+    B: http_body::Body<Data = Bytes> + Unpin + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     metrics.inc_requests();
 
     // PERF: Extract method and path WITHOUT owning - use references as long as possible

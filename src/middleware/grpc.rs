@@ -616,6 +616,57 @@ impl GrpcServer {
     pub fn reflection_enabled(&self) -> bool {
         self.config.reflection
     }
+
+    /// Process a bidirectional (or client) streaming exchange.
+    ///
+    /// Validates the service/method against the registry and, for streaming
+    /// method definitions, returns one response per accepted request. Errors
+    /// are returned as `GrpcResponse::error` with the standard status code.
+    pub fn handle_stream(&self, requests: &[GrpcRequest]) -> Vec<GrpcResponse> {
+        if requests.is_empty() {
+            return Vec::new();
+        }
+        let first = &requests[0];
+        let method = match self.resolve_method(&first.service, &first.method) {
+            Ok(m) => m,
+            Err(err) => return vec![GrpcResponse::from_error(&err)],
+        };
+        match method.method_type {
+            GrpcMethodType::Unary => vec![self.handle_request(first)],
+            GrpcMethodType::ClientStreaming
+            | GrpcMethodType::BidirectionalStreaming
+            | GrpcMethodType::ServerStreaming => requests
+                .iter()
+                .map(|req| self.handle_request(req))
+                .collect(),
+        }
+    }
+
+    /// Build a reflection descriptor (FileDescriptorProto-style JSON) for every
+    /// registered service, used by the gRPC reflection service.
+    pub fn reflection_descriptors(&self) -> Vec<serde_json::Value> {
+        use serde_json::json;
+        self.services
+            .read()
+            .values()
+            .map(|service| {
+                json!({
+                    "name": service.name,
+                    "package": service.name.rsplit('.').next().unwrap_or(""),
+                    "service": [{
+                        "name": service.name.rsplit('.').next().unwrap_or(&service.name),
+                        "method": service.methods.iter().map(|m| json!({
+                            "name": m.name,
+                            "input_type": format!(".{}", m.input_type),
+                            "output_type": format!(".{}", m.output_type),
+                            "client_streaming": matches!(m.method_type, GrpcMethodType::ClientStreaming | GrpcMethodType::BidirectionalStreaming),
+                            "server_streaming": matches!(m.method_type, GrpcMethodType::ServerStreaming | GrpcMethodType::BidirectionalStreaming),
+                        })).collect::<Vec<_>>(),
+                    }],
+                })
+            })
+            .collect()
+    }
 }
 
 // ============================================================================
@@ -1070,5 +1121,55 @@ mod tests {
             service.methods()[1].method_type,
             GrpcMethodType::ServerStreaming
         );
+    }
+
+    #[test]
+    fn test_grpc_handle_stream_bidi() {
+        let server = GrpcServer::new(GrpcConfig::new());
+        let service = GrpcServiceDef::new("chat.Chat").add_method(GrpcMethodDef::bidi_streaming(
+            "RouteChat",
+            "RouteNote",
+            "RouteNote",
+        ));
+        server.register_service(service);
+
+        let requests = vec![
+            GrpcRequest::new("chat.Chat", "RouteChat", vec![1]),
+            GrpcRequest::new("chat.Chat", "RouteChat", vec![2]),
+        ];
+        let responses = server.handle_stream(&requests);
+        assert_eq!(responses.len(), 2);
+        assert!(responses.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn test_grpc_handle_stream_unknown_method() {
+        let server = GrpcServer::new(GrpcConfig::new());
+        let requests = vec![GrpcRequest::new("missing.Service", "Call", vec![])];
+        let responses = server.handle_stream(&requests);
+        assert_eq!(responses.len(), 1);
+        assert!(!responses[0].is_ok());
+        assert_eq!(responses[0].status.code, GrpcError::ServiceNotFound.code());
+    }
+
+    #[test]
+    fn test_grpc_reflection_descriptors() {
+        let server = GrpcServer::new(GrpcConfig::new().with_reflection(true));
+        let service = GrpcServiceDef::new("helloworld.Greeter").add_method(GrpcMethodDef::bidi_streaming(
+            "SayHelloStream",
+            "HelloRequest",
+            "HelloReply",
+        ));
+        server.register_service(service);
+
+        let descriptors = server.reflection_descriptors();
+        assert_eq!(descriptors.len(), 1);
+        let first = &descriptors[0];
+        assert_eq!(first["name"], "helloworld.Greeter");
+        assert_eq!(first["package"], "helloworld");
+        let method = &first["service"][0]["method"][0];
+        assert_eq!(method["name"], "SayHelloStream");
+        assert_eq!(method["client_streaming"], true);
+        assert_eq!(method["server_streaming"], true);
     }
 }

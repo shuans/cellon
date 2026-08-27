@@ -1,12 +1,14 @@
 # Continuous Integration for Cello
 # Runs on every push and pull request to main branch
-# Builds for multiple platforms: Linux (x86_64, aarch64), macOS (x86_64, aarch64), Windows (x86_64)
+# Builds for multiple platforms: Linux (x86_64, aarch64), macOS (aarch64), Windows (x86_64, disabled)
+# Pushing a `v*` tag also triggers a GitHub Release with the built wheels.
 
 name: CI
 
 on:
   push:
     branches: [main, master]
+    tags: ["v*"]
   pull_request:
     branches: [main, master]
 
@@ -36,6 +38,17 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --all-targets || echo "Clippy warnings found (non-blocking)"
+
+      # The `full` feature compiles the optional graphql/grpc deps; the regular
+      # maturin build does not, so check it explicitly.
+      - name: Check all features (graphql + grpc)
+        run: cargo check --features full || echo "Feature build warnings found (non-blocking)"
+
+      # Rust unit tests (accept-key vectors, gRPC streaming, logging config...).
+      # Non-blocking: pyo3 extension-module test binaries can fail to link on
+      # some runners; `cargo clippy --all-targets` still typechecks them.
+      - name: Run Rust unit tests
+        run: cargo test --lib || echo "Rust unit test issues found (non-blocking)"
 
       - name: Install Python linters
         run: pip install ruff
@@ -146,26 +159,57 @@ jobs:
           path: dist/*.whl
 
   # ============================================================================
-  # Windows Builds (x86_64)
+  # Windows Builds (x86_64) — DISABLED
   # ============================================================================
-  build-windows:
-    name: Build Windows (x86_64)
-    runs-on: windows-latest
+  # The Windows binary build is temporarily commented out. The Windows `test`
+  # job (matrix above) still builds and installs the wheel on Windows.
+  #
+  # build-windows:
+  #   name: Build Windows (x86_64)
+  #   runs-on: windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ env.PYTHON_VERSION }}
+  #
+  #     - name: Build wheels
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         args: --release --out dist
+  #
+  #     - name: Upload wheel
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wheel-windows-x86_64
+  #         path: dist/*.whl
+
+  # ============================================================================
+  # GitHub Release (tag-triggered)
+  #
+  # Pushing a `v*` tag (e.g. `v1.4.0`) builds the Linux/macOS wheels and
+  # publishes them as a GitHub Release with auto-generated release notes.
+  # ============================================================================
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-linux-x86, build-linux-aarch64, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          path: dist
+          merge-multiple: true
 
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
         with:
-          args: --release --out dist
-
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheel-windows-x86_64
-          path: dist/*.whl
+          files: dist/*
+          generate_release_notes: true

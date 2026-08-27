@@ -1198,6 +1198,124 @@ class Schema:
 
 
 # ---------------------------------------------------------------------------
+# graphql-ws protocol (WebSocket subscriptions)
+# ---------------------------------------------------------------------------
+
+async def graphql_ws_session(ws, engine: GraphQL):
+    """Serve the `graphql-ws <https://github.com/enisdenjo/graphql-ws>`_ protocol.
+
+    Implements the server-side messages used for realtime subscriptions:
+
+    - ``connection_init`` → ``connection_ack``
+    - ``subscribe`` → ``next`` payloads, then ``complete``
+    - ``complete`` cancels a running subscription
+    - ``ping`` → ``pong``
+    - ``connection_terminate`` closes the session
+
+    ``engine`` must be a :class:`GraphQL` instance with subscription resolvers
+    registered (see :meth:`GraphQL.add_subscription`).
+    """
+    import asyncio
+
+    subscriptions = {}
+    while True:
+        raw = await ws.receive_text()
+        if raw is None:
+            break
+        try:
+            message = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            await _graphql_ws_send(ws, {"type": "error", "payload": {"message": f"Invalid JSON: {exc}"}})
+            continue
+        if not isinstance(message, dict):
+            continue
+        msg_type = message.get("type")
+        op_id = message.get("id")
+        if msg_type == "connection_init":
+            await _graphql_ws_send(ws, {"type": "connection_ack"})
+        elif msg_type == "ping":
+            await _graphql_ws_send(ws, {"type": "pong"})
+        elif msg_type == "pong":
+            pass
+        elif msg_type == "connection_terminate":
+            break
+        elif msg_type == "subscribe":
+            payload = message.get("payload") or {}
+            query = payload.get("query", "")
+            if not isinstance(query, str) or not query.strip():
+                await _graphql_ws_send(
+                    ws, {"type": "error", "id": op_id, "payload": {"message": "query is required"}}
+                )
+                continue
+            variables = payload.get("variables")
+            if variables is not None and not isinstance(variables, dict):
+                await _graphql_ws_send(
+                    ws,
+                    {"type": "error", "id": op_id, "payload": {"message": "variables must be an object"}},
+                )
+                continue
+            subscriptions[op_id] = asyncio.create_task(
+                _graphql_ws_stream(
+                    ws,
+                    engine,
+                    op_id,
+                    query,
+                    variables,
+                    payload.get("operationName"),
+                )
+            )
+        elif msg_type == "complete":
+            task = subscriptions.pop(op_id, None)
+            if task is not None:
+                task.cancel()
+        else:
+            await _graphql_ws_send(
+                ws,
+                {"type": "error", "id": op_id, "payload": {"message": f"Unsupported message type: {msg_type}"}},
+            )
+
+    for task in subscriptions.values():
+        task.cancel()
+    try:
+        ws.close()
+    except Exception:
+        pass
+
+
+async def _graphql_ws_stream(ws, engine: GraphQL, op_id, query, variables, operation_name):
+    """Drive one subscription operation and emit ``next`` / ``complete`` frames."""
+    import asyncio
+
+    try:
+        async for payload in engine.subscribe(
+            query, variables=variables, operation_name=operation_name
+        ):
+            await _graphql_ws_send(ws, {"type": "next", "id": op_id, "payload": payload})
+        await _graphql_ws_send(ws, {"type": "complete", "id": op_id})
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        try:
+            await _graphql_ws_send(
+                ws, {"type": "error", "id": op_id, "payload": {"message": str(exc)}}
+            )
+        except Exception:
+            pass
+
+
+async def _graphql_ws_send(ws, message: dict):
+    """Send a graphql-ws message, tolerating a closed connection.
+
+    ``send_json`` is synchronous (it queues onto the outbound channel), so no
+    await is needed; the writer task flushes it to the socket.
+    """
+    try:
+        ws.send_json(message)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

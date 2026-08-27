@@ -41,10 +41,28 @@ The initial review found that the documentation overstated several enterprise fe
 
 The requested implementation pass is complete for Redis Streams, RabbitMQ AMQP,
 GraphQL HTTP query/mutation mounting, and the JSON generic `grpc.aio` transport.
-The remaining limitations are intentional and documented: Kafka/SQS external
-clients, protobuf-generated gRPC wire compatibility, gRPC reflection/gRPC-Web/
-bidirectional streaming, GraphQL WebSocket subscriptions/federation/full
-validation, and HTTP/3 QUIC serving.
+
+A subsequent pass (issues #12/#19/#14/#13/#9) added:
+
+- **Structured logging (#12)** — `LogFormat`/`LoggingConfig` + `configure_logging()`
+  install a global `tracing_subscriber` (JSON or text); `LoggingMiddleware` now
+  emits structured `tracing` events with latency and trace context.
+- **Real WebSocket connections (#19)** — RFC 6455 upgrade handling in the server
+  (sha1 `Sec-WebSocket-Accept`), `tokio-tungstenite` sessions with a tokio
+  channel pair per connection, async `receive*`/sync `recv*` Python API.
+- **GraphQL WebSocket subscriptions (#14)** — the graphql-ws protocol handler
+  mounted at the GraphQL path, streaming subscription payloads over upgraded
+  connections.
+- **gRPC completion (#13)** — client-streaming and bidirectional streaming,
+  gRPC server reflection (`grpcio-reflection`), a gRPC-Web HTTP/1.1 bridge, and
+  a `ProtobufCodec` for wire-compatible protobuf messages.
+- **HTTP/3 (QUIC) serving (#9)** — `h3`/`h3-quinn` + `quinn 0.11`; `App.run()`
+  binds a UDP endpoint on the same host:port as TCP and serves the same routes
+  over HTTP/3 when `enable_tls` + `enable_http3` are configured.
+
+Remaining limitations are intentional and documented: Kafka/SQS external
+clients, GraphQL federation/full schema validation, and protobuf-generated stub
+code generation.
 
 ## Verification Policy
 

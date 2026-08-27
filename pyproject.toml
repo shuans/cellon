@@ -47,7 +47,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-grpc = ["grpcio>=1.62"]
+grpc = ["grpcio>=1.62", "grpcio-reflection>=1.62"]
 messaging = ["redis>=5.0", "aio-pika>=9.4"]
 eventsourcing = ["duckdb>=1.0; platform_python_implementation == 'CPython'"]
 full = [

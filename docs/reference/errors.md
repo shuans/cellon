@@ -160,6 +160,42 @@ When the circuit breaker is in the open state:
 
 ---
 
+## Built-in Error Classes
+
+Cello ships exception classes that map onto the standard error responses and
+work directly with `@app.exception_handler`:
+
+| Class | Status | Meaning |
+|-------|--------|---------|
+| `ValidationError` | 422 | Request failed validation |
+| `NotFoundError` | 404 | Resource does not exist |
+| `AuthenticationError` | 401 | Caller not authenticated |
+| `AuthorizationError` | 403 | Caller lacks permission |
+| `BadRequestError` | 400 | Malformed request |
+| `ConflictError` | 409 | State conflict |
+| `RateLimitError` | 429 | Rate limit exceeded |
+| `TimeoutError` | 504 | Operation timed out |
+| `InternalServerError` | 500 | Unexpected failure |
+
+```python
+from cello import App, NotFoundError
+
+app = App()
+
+@app.get("/users/{id}")
+def get_user(request):
+    user = find_user(request.params["id"])
+    if user is None:
+        raise NotFoundError(f"User {request.params['id']} not found")
+    return user
+```
+
+Raised built-in errors render as RFC 7807 Problem Details with the matching
+status code by default; register an `@app.exception_handler(...)` to customize
+the response.
+
+---
+
 ## Customizing Error Responses
 
 ### Exception Handlers

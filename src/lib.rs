@@ -61,6 +61,9 @@ pub mod async_loop;
 // Native async data layer: real Postgres pool + Redis client (issue #5).
 pub mod db;
 
+// Structured logging: JSON/text tracing subscriber + logging config (issue #12).
+pub mod logging;
+
 use pyo3::prelude::*;
 use std::sync::Arc;
 
@@ -100,10 +103,12 @@ pub struct Cello {
     /// Maximum number of blocking threads available for offloaded sync handlers.
     blocking_threads: usize,
     /// Optional native TLS configuration.
+    #[pyo3(get)]
     tls_config: Option<PyTlsConfig>,
     /// Optional HTTP/2 configuration.
     http2_config: Option<server::Http2Config>,
-    /// Optional HTTP/3 configuration (recorded until the QUIC server is enabled).
+    /// Optional HTTP/3 configuration (QUIC/UDP serving enabled with TLS).
+    #[pyo3(get)]
     http3_config: Option<PyHttp3Config>,
     /// Optional multi-process cluster configuration.
     cluster_config: Option<server::ClusterConfig>,
@@ -375,7 +380,9 @@ impl Cello {
         self.http2_config = Some(native);
     }
 
-    /// Record HTTP/3 configuration. QUIC serving is not yet part of App.run().
+    /// Record HTTP/3 configuration. When `enable_tls` is also set, App.run()
+    /// binds a QUIC/UDP endpoint on the same host:port and serves the same
+    /// routes over HTTP/3 using the TLS certificate/key.
     pub fn enable_http3(&mut self, config: Option<PyHttp3Config>) {
         self.http3_config = Some(config.unwrap_or_else(|| PyHttp3Config::new(30, 1350, 100, false)));
     }
@@ -1053,6 +1060,7 @@ def openapi_handler(request):
         let handler_timeout_secs = self.handler_timeout_secs;
         let tls_config = self.tls_config.clone();
         let http2_config = self.http2_config.clone();
+        let http3_config = self.http3_config.clone();
         let cluster_config = self.cluster_config.clone();
 
         // Start the persistent asyncio loop now, while single-threaded and holding the
@@ -1094,6 +1102,18 @@ def openapi_handler(request):
                     }
                     if let Some(http2) = http2_config {
                         config = config.http2(http2);
+                    }
+                    if let Some(http3) = http3_config {
+                        let mut h3 = server::Http3Config::new()
+                            .max_idle_timeout(std::time::Duration::from_secs(
+                                http3.max_idle_timeout,
+                            ))
+                            .max_udp_payload_size(http3.max_udp_payload_size)
+                            .max_streams_bidi(http3.initial_max_streams_bidi);
+                        if http3.enable_0rtt {
+                            h3 = h3.enable_0rtt();
+                        }
+                        config.http3 = Some(h3);
                     }
                     if let Some(cluster) = cluster_config {
                         config = config.cluster(cluster);
@@ -2645,6 +2665,11 @@ fn _cello(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     // RFC 7807 and exception handler APIs
     m.add_class::<error::ProblemDetails>()?;
     m.add_class::<error::PyErrorHandlerRegistry>()?;
+
+    // Structured logging (issue #12)
+    m.add_class::<logging::LogFormat>()?;
+    m.add_class::<logging::PyLoggingConfig>()?;
+    m.add_wrapped(wrap_pyfunction!(logging::configure_logging)?)?;
 
     Ok(())
 }

@@ -5,7 +5,33 @@ description: Request and response logging in Cello Framework
 
 # Logging Middleware
 
-Cello provides built-in request logging implemented in Rust. The logging middleware records HTTP method, path, status code, and response time for every request.
+Cello provides built-in request logging implemented in Rust. The logging middleware records HTTP method, path, status code, response time, and trace context for every request, and emits **structured `tracing` events** — output as plain text or JSON depending on `configure_logging()`.
+
+## Structured Logging (JSON)
+
+```python
+from cello import App
+from cello.logging import LogFormat
+
+app = App()
+app.configure_logging(
+    format=LogFormat.JSON,      # or LogFormat.TEXT / "json" / "text"
+    level="INFO",
+    include_trace_context=True, # attach trace_id/span_id when present
+    exclude_paths=["/health", "/metrics"],
+)
+app.enable_logging()
+```
+
+With `LogFormat.JSON`, each access log is one JSON object per line (ELK/Loki
+friendly):
+
+```json
+{"timestamp":"...","level":"INFO","fields":{"message":"request completed","method":"GET","path":"/api/users","status":200,"status_text":"OK","duration_ms":"2.300"}}
+```
+
+`configure_logging()` installs the global `tracing_subscriber`; it is safe to
+call more than once and also works standalone (`cello.logging.configure_logging`).
 
 ## Quick Start
 

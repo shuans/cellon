@@ -90,6 +90,18 @@ def _mark_blocking(handler, blocking):
             pass  # callable object with no writable __dict__; stays adaptive
     return handler
 from .database import AsyncFileDatabase, transactional
+from .exceptions import (
+    CelloError,
+    ValidationError,
+    NotFoundError,
+    AuthenticationError,
+    AuthorizationError,
+    BadRequestError,
+    ConflictError,
+    RateLimitError,
+    TimeoutError,
+    InternalServerError,
+)
 from .guards import (
     Guard,
     Role as RoleGuard,
@@ -335,6 +347,17 @@ __all__ = [
     "SagaConfig",
     # RFC 7807
     "ProblemDetails",
+    # Built-in error classes
+    "CelloError",
+    "ValidationError",
+    "NotFoundError",
+    "AuthenticationError",
+    "AuthorizationError",
+    "BadRequestError",
+    "ConflictError",
+    "RateLimitError",
+    "TimeoutError",
+    "InternalServerError",
     # Config validators
     "validate_jwt_config",
     "validate_session_config",
@@ -632,10 +655,24 @@ class App:
         """
         Register a WebSocket route.
 
+        The handler receives a real, connected ``WebSocket`` handle. Use the
+        async API for production code; the synchronous ``recv()``/``send_text()``
+        helpers remain available.
+
         Args:
             path: URL path for WebSocket endpoint
 
         Example:
+            @app.websocket("/ws")
+            async def websocket_handler(ws):
+                await ws.accept()
+                while True:
+                    message = await ws.receive_text()
+                    if message is None:
+                        break
+                    await ws.send_text(f"Echo: {message}")
+
+        Sync-style example (still supported):
             @app.websocket("/ws")
             def websocket_handler(ws):
                 while True:
@@ -703,6 +740,54 @@ class App:
         """Enable request/response logging middleware."""
         self._app.enable_logging()
 
+    def configure_logging(self, format=None, level: str = "info",
+                          include_trace_context: bool = True,
+                          exclude_paths: list = None,
+                          log_body: bool = False,
+                          log_headers: bool = False):
+        """
+        Configure global structured logging (text or JSON) and the access log.
+
+        Args:
+            format: ``LogFormat.JSON``, ``LogFormat.TEXT``, or a string
+                (``"json"`` / ``"text"``).
+            level: Minimum level: "trace", "debug", "info", "warn", "error".
+            include_trace_context: Attach trace/span ids when present.
+            exclude_paths: Paths excluded from the access log.
+            log_body: Log request bodies.
+            log_headers: Log request headers.
+
+        Example:
+            from cello.logging import LogFormat
+
+            app.configure_logging(
+                format=LogFormat.JSON,
+                level="INFO",
+                exclude_paths=["/health", "/metrics"],
+            )
+            app.enable_logging()
+        """
+        from .logging import LogFormat as _LogFormat
+        from .logging import configure_logging as _configure_logging
+
+        if isinstance(format, str):
+            lowered = format.lower()
+            if lowered == "json":
+                format = _LogFormat.JSON
+            elif lowered == "text":
+                format = _LogFormat.TEXT
+            else:
+                raise ValueError(f"Unknown log format: {format!r} (expected 'json' or 'text')")
+        _configure_logging(
+            format=format,
+            level=level,
+            include_trace_context=include_trace_context,
+            exclude_paths=exclude_paths,
+            log_body=log_body,
+            log_headers=log_headers,
+        )
+        return self
+
     def enable_compression(self, min_size: int = None):
         """
         Enable gzip compression middleware.
@@ -728,7 +813,21 @@ class App:
         return self
 
     def enable_http3(self, config: "Http3Config" = None):
-        """Record HTTP/3 settings; QUIC serving is not available in App.run()."""
+        """
+        Enable HTTP/3 (QUIC) serving on the same host:port as the TCP server.
+
+        HTTP/3 requires TLS 1.3, so call :meth:`enable_tls` with a PEM
+        certificate/key first; they are reused for the QUIC handshake.
+
+        Example:
+            app.enable_tls(TlsConfig(cert_path="cert.pem", key_path="key.pem"))
+            app.enable_http3(Http3Config(
+                max_idle_timeout=30,
+                max_udp_payload_size=1350,
+                initial_max_streams_bidi=100,
+                enable_0rtt=False,
+            ))
+        """
         self._app.enable_http3(config)
         return self
 
@@ -1442,6 +1541,32 @@ class App:
         # Preserve the legacy metadata-registration return value.
         return None
 
+    def enable_grpc_web(self, path: str = "/grpc.web", reflection: bool = None):
+        """Expose the gRPC server to browser clients via gRPC-Web over HTTP/1.1.
+
+        Registers ``POST {path}/{service}/{method}`` routes that bridge gRPC-Web
+        frames (5-byte prefix, JSON payloads for the generic service API) to the
+        services registered with :meth:`add_grpc_service`. Enable ``reflection``
+        to turn on the standard gRPC server reflection service (requires the
+        ``grpcio-reflection`` package).
+
+        Example:
+            app.enable_grpc(GrpcConfig(reflection=True))
+            app.add_grpc_service(UserService())
+            app.enable_grpc_web("/grpc.web")
+        """
+        from .grpc import grpc_web_request_handler
+
+        if self._grpc_server is None:
+            self.enable_grpc(GrpcConfig())
+        if reflection is not None:
+            self._grpc_config.reflection = bool(reflection)
+        if not isinstance(path, str) or not path.startswith("/"):
+            raise ValueError("gRPC-Web path must start with '/'")
+        handler = grpc_web_request_handler(self._grpc_server)
+        self._app.post(f"{path.rstrip('/')}/{{service}}/{{method}}", handler)
+        return self
+
     def enable_messaging(self, config: "KafkaConfig" = None):
         """
         Record Kafka configuration (config only).
@@ -1804,6 +1929,15 @@ class App:
                 operation_name=payload.get("operationName"),
             )
             return Response.json(result)
+
+        # WebSocket subscription transport: the same path speaks the graphql-ws
+        # protocol over an upgraded connection, so clients can subscribe to
+        # Subscription resolvers in realtime.
+        from .graphql import graphql_ws_session
+
+        @self.websocket(path)
+        async def graphql_ws(ws):
+            await graphql_ws_session(ws, engine)
 
         self._graphql_engine = engine
         self._graphql_path = path

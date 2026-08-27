@@ -113,7 +113,7 @@ python app.py
 | 🔄 **Async/Sync** | Support for both `async def` and regular `def` handlers |
 | 🛡️ **Middleware** | Built-in CORS, logging, compression, rate limiting |
 | 📐 **Blueprints** | Modular route grouping for larger apps |
-| 🌐 **WebSocket** | Real-time bidirectional communication |
+| 🌐 **WebSocket** | Real RFC 6455 connections (tokio channels + tungstenite) |
 | 📡 **SSE** | Server-Sent Events for streaming |
 | 📁 **Multipart** | File uploads and form data handling |
 
@@ -175,9 +175,10 @@ python app.py
 
 | Feature | Description |
 |---------|-------------|
-| 🔷 **GraphQL** | Python Query/Mutation/Subscription engine with HTTP query mounting |
+| 🔷 **GraphQL** | Query/Mutation/Subscription engine with HTTP mounting + graphql-ws WebSocket subscriptions |
 | 📊 **DataLoader** | Explicit batching and caching loader |
-| 🔌 **gRPC** | Real grpc.aio HTTP/2 generic transport with JSON unary/server-streaming calls |
+| 🔌 **gRPC** | grpc.aio HTTP/2 transport with unary, client/server/bidi streaming, reflection & gRPC-Web |
+| 📜 **Structured Logging** | JSON or text access logs via tracing-subscriber |
 | 📨 **Kafka** | Compatibility producer/consumer adapter; external Kafka client pending |
 | 🐰 **RabbitMQ** | Real AMQP producer/consumer with durable queues and acknowledgements |
 | ☁️ **SQS/SNS** | Compatibility configuration API; external SQS client pending |
@@ -188,7 +189,7 @@ python app.py
 |---------|-------------|
 | 🔒 **TLS/SSL** | Native HTTPS with rustls |
 | ⚡ **HTTP/2** | Multiplexed connections with h2 |
-| 🚀 **HTTP/3** | Configuration only; QUIC listener pending |
+| 🚀 **HTTP/3** | QUIC/UDP listener via quinn + h3 (requires TLS cert/key) |
 | 🏭 **Cluster Mode** | Multi-worker process deployment |
 
 ---
@@ -370,16 +371,44 @@ def admin_panel(request):
 
 ### WebSocket
 
+Real connections: the server answers the RFC 6455 handshake (sha1-based
+`Sec-WebSocket-Accept`), then runs `tokio-tungstenite` with a channel pair per
+connection. Both async and sync handler styles are supported.
+
 ```python
 @app.websocket("/ws/chat")
-def chat_handler(ws):
-    ws.send_text("Welcome to the chat!")
+async def chat_handler(ws):
+    await ws.accept()
+    await ws.send_text("Welcome to the chat!")
 
     while True:
-        message = ws.recv()
+        message = await ws.receive_text()
         if message is None:
             break
-        ws.send_json({"type": "echo", "content": message.text})
+        await ws.send_json({"type": "echo", "content": message})
+```
+
+### Structured Logging (JSON)
+
+```python
+from cello.logging import LogFormat
+
+app.configure_logging(
+    format=LogFormat.JSON,
+    level="INFO",
+    exclude_paths=["/health", "/metrics"],
+)
+app.enable_logging()
+```
+
+### Built-in Error Classes
+
+```python
+from cello import NotFoundError, ValidationError, AuthenticationError, AuthorizationError
+
+@app.exception_handler(NotFoundError)
+def handle_not_found(request, exc):
+    return {"error": "not found", "detail": str(exc)}
 ```
 
 ### Server-Sent Events

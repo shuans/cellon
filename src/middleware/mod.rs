@@ -558,18 +558,25 @@ impl Default for MiddlewareChain {
 // ============================================================================
 
 /// Logging middleware for request/response logging.
+///
+/// Emits structured `tracing` events (method, path, status, duration, trace
+/// context) instead of raw `println!`, so the output format follows whatever
+/// subscriber `configure_logging()` installed — plain text or JSON.
 pub struct LoggingMiddleware {
     pub log_body: bool,
     pub log_headers: bool,
     pub skip_paths: Vec<String>,
+    pub include_trace_context: bool,
 }
 
 impl LoggingMiddleware {
     pub fn new() -> Self {
+        let defaults = crate::logging::current_config();
         LoggingMiddleware {
-            log_body: false,
-            log_headers: false,
-            skip_paths: vec!["/health".to_string(), "/metrics".to_string()],
+            log_body: defaults.log_body,
+            log_headers: defaults.log_headers,
+            skip_paths: defaults.exclude_paths,
+            include_trace_context: defaults.include_trace_context,
         }
     }
 
@@ -597,22 +604,101 @@ impl Default for LoggingMiddleware {
 
 impl Middleware for LoggingMiddleware {
     fn before(&self, request: &mut Request) -> MiddlewareResult {
-        println!("--> {} {}", request.method, request.path);
+        // PERF: store the start instant as wall-clock nanoseconds so the after
+        // hook can report request duration without holding an Instant across
+        // the request (context only stores JSON values).
+        let start_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        request
+            .context
+            .insert("logging_start".to_string(), serde_json::Value::from(start_nanos));
+
+        let trace_id = if self.include_trace_context {
+            request
+                .context
+                .get("trace_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            String::new()
+        };
+        let span_id = if self.include_trace_context {
+            request
+                .context
+                .get("span_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            String::new()
+        };
+
+        tracing::info!(
+            trace_id = %trace_id,
+            span_id = %span_id,
+            method = %request.method,
+            path = %request.path,
+            "request started"
+        );
         if self.log_headers {
             for (key, value) in &request.headers {
-                println!("    {key}: {value}");
+                tracing::debug!(header_key = %key, header_value = %value, "request header");
             }
+        }
+        if self.log_body && !request.body.is_empty() {
+            let body = String::from_utf8_lossy(&request.body);
+            tracing::debug!(method = %request.method, path = %request.path, body = %body, "request body");
         }
         Ok(MiddlewareAction::Continue)
     }
 
     fn after(&self, request: &Request, response: &mut Response) -> MiddlewareResult {
-        println!(
-            "<-- {} {} {} {}",
-            request.method,
-            request.path,
-            response.status,
-            status_text(response.status)
+        let duration_ms = request
+            .context
+            .get("logging_start")
+            .and_then(|v| v.as_u64())
+            .map(|start| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0);
+                now.saturating_sub(start) as f64 / 1_000_000.0
+            })
+            .unwrap_or(0.0);
+
+        let trace_id = if self.include_trace_context {
+            request
+                .context
+                .get("trace_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            String::new()
+        };
+        let span_id = if self.include_trace_context {
+            request
+                .context
+                .get("span_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            String::new()
+        };
+
+        tracing::info!(
+            trace_id = %trace_id,
+            span_id = %span_id,
+            method = %request.method,
+            path = %request.path,
+            status = response.status,
+            status_text = status_text(response.status),
+            duration_ms = format!("{duration_ms:.3}"),
+            "request completed"
         );
         Ok(MiddlewareAction::Continue)
     }
