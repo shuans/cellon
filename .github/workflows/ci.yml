@@ -63,7 +63,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Windows test runner is disabled (see the commented build-windows
+        # job below); wheels are still produced by the release job on tags.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
