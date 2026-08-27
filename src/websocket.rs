@@ -97,9 +97,11 @@ impl WebSocketMessage {
     #[getter]
     fn payload(&self, py: Python<'_>) -> Py<PyAny> {
         if let Some(text) = &self.text {
-            text.clone().into_py(py)
+            let value: Py<PyAny> = text.clone().into_py(py);
+            value
         } else if let Some(bytes) = &self.data {
-            pyo3::types::PyBytes::new(py, bytes).into_py(py)
+            let value: Py<PyAny> = pyo3::types::PyBytes::new(py, bytes).into_py(py);
+            value
         } else {
             py.None()
         }
@@ -256,9 +258,10 @@ impl WebSocket {
             match receive_from_backend(backend).await {
                 Some(msg) if msg.msg_type == "binary" => {
                     let bytes = msg.data.unwrap_or_default();
-                    Ok(Some(Python::with_gil(|py| {
+                    let data: Py<PyAny> = Python::with_gil(|py| {
                         pyo3::types::PyBytes::new(py, &bytes).into_py(py)
-                    })))
+                    });
+                    Ok(Some(data))
                 }
                 _ => Ok(None),
             }
