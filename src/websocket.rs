@@ -20,6 +20,10 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
 
 /// WebSocket message types for Python.
+///
+/// Note: the `text` / `binary` static constructors intentionally keep those
+/// names (they are used across the test suite and docs), so the payload
+/// accessor is exposed as `payload` to avoid a pyo3 name clash.
 #[pyclass]
 #[derive(Clone)]
 pub struct WebSocketMessage {
@@ -28,11 +32,9 @@ pub struct WebSocketMessage {
     pub msg_type: String,
 
     /// Text data (for text messages)
-    #[pyo3(get)]
     pub text: Option<String>,
 
     /// Binary data (for binary messages)
-    #[pyo3(get)]
     pub data: Option<Vec<u8>>,
 }
 
@@ -87,6 +89,19 @@ impl WebSocketMessage {
             msg_type: "close".to_string(),
             text: None,
             data: None,
+        }
+    }
+
+    /// The message payload: the text for text messages, bytes for binary
+    /// messages, or `None` for control frames.
+    #[getter]
+    fn payload(&self, py: Python<'_>) -> Py<PyAny> {
+        if let Some(text) = &self.text {
+            text.clone().into_py(py)
+        } else if let Some(bytes) = &self.data {
+            pyo3::types::PyBytes::new(py, bytes).into_py(py)
+        } else {
+            py.None()
         }
     }
 
@@ -234,12 +249,17 @@ impl WebSocket {
         })
     }
 
-    /// Await the next binary message.
+    /// Await the next binary message (returned as `bytes`).
     pub fn receive_binary<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
         let backend = self.backend.clone();
         pyo3_asyncio::tokio::future_into_py(py, async move {
             match receive_from_backend(backend).await {
-                Some(msg) if msg.msg_type == "binary" => Ok(msg.data),
+                Some(msg) if msg.msg_type == "binary" => {
+                    let bytes = msg.data.unwrap_or_default();
+                    Ok(Some(Python::with_gil(|py| {
+                        pyo3::types::PyBytes::new(py, &bytes).into_py(py)
+                    })))
+                }
                 _ => Ok(None),
             }
         })

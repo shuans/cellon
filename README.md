@@ -394,7 +394,7 @@ async def chat_handler(ws):
 from cello.logging import LogFormat
 
 app.configure_logging(
-    format=LogFormat.Json,
+    format=LogFormat.JSON,
     level="INFO",
     exclude_paths=["/health", "/metrics"],
 )

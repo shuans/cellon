@@ -39,7 +39,7 @@ def echo(ws):
         msg = ws.recv()
         if msg is None or msg.is_close():
             break
-        ws.send_text(f"Echo: {msg.text}")
+        ws.send_text(f"Echo: {msg.payload}")
 
 if __name__ == "__main__":
     app.run()
@@ -142,9 +142,9 @@ def handler(ws):
         if msg.is_close():
             break  # Client sent close frame
         if msg.is_text():
-            print(f"Text: {msg.text}")
+            print(f"Text: {msg.payload}")
         elif msg.is_binary():
-            print(f"Binary: {len(msg.data)} bytes")
+            print(f"Binary: {len(msg.payload)} bytes")
 ```
 
 ### Connection State
@@ -191,9 +191,9 @@ msg = WebSocketMessage.close()
 msg = ws.recv()
 
 if msg.is_text():
-    print(f"Text: {msg.text}")
+    print(f"Text: {msg.payload}")
 elif msg.is_binary():
-    print(f"Binary: {len(msg.data)} bytes")
+    print(f"Binary: {len(msg.payload)} bytes")
 elif msg.is_close():
     print("Client closing connection")
 ```
@@ -224,7 +224,7 @@ def lifecycle_demo(ws):
         msg = ws.recv()
         if msg is None or msg.is_close():
             break
-        ws.send_text(f"Got: {msg.text}")
+        ws.send_text(f"Got: {msg.payload}")
 
     # Phase: Cleanup (connection will close when handler returns)
     print("Client disconnected")
@@ -249,7 +249,7 @@ def data_stream(ws):
             break
 
         try:
-            data = json.loads(msg.text)
+            data = json.loads(msg.payload)
             response = process_command(data)
             ws.send_text(json.dumps(response))
         except json.JSONDecodeError:
@@ -297,7 +297,7 @@ def chat(ws):
         # Broadcast the message to all clients
         broadcast(json.dumps({
             "type": "message",
-            "text": msg.text,
+            "text": msg.payload,
         }))
 
     # Cleanup on disconnect
@@ -338,7 +338,7 @@ def room_handler(ws, request):
         if msg is None or msg.is_close():
             break
         # Broadcast to room members
-        ws.send_text(f"[{room_id}] {msg.text}")
+        ws.send_text(f"[{room_id}] {msg.payload}")
 ```
 
 ---

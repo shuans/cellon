@@ -35,6 +35,7 @@ class FakeWebSocket:
         self.closed = True
 
 
+@pytest.mark.asyncio
 async def test_connection_init_and_terminate():
     ws = FakeWebSocket(
         [
@@ -48,6 +49,7 @@ async def test_connection_init_and_terminate():
     assert ws.closed is True
 
 
+@pytest.mark.asyncio
 async def test_ping_pong():
     ws = FakeWebSocket(
         [
@@ -62,6 +64,7 @@ async def test_ping_pong():
     assert types == ["connection_ack", "pong"]
 
 
+@pytest.mark.asyncio
 async def test_subscription_streams_next_and_complete():
     async def counter(info):
         for i in range(3):
@@ -91,6 +94,7 @@ async def test_subscription_streams_next_and_complete():
     assert completes[0]["id"] == "1"
 
 
+@pytest.mark.asyncio
 async def test_subscribe_with_invalid_query():
     engine = GraphQL()
     ws = FakeWebSocket(
@@ -105,6 +109,7 @@ async def test_subscribe_with_invalid_query():
     assert errors[0]["id"] == "1"
 
 
+@pytest.mark.asyncio
 async def test_complete_cancels_subscription():
     started = asyncio.Event()
 

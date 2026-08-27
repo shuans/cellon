@@ -13,7 +13,7 @@
 //! from cello.logging import configure_logging, LogFormat
 //!
 //! configure_logging(
-//!     format=LogFormat.Json,
+//!     format=LogFormat.JSON,
 //!     level="INFO",
 //!     exclude_paths=["/health", "/metrics"],
 //! )
@@ -23,9 +23,9 @@ use pyo3::prelude::*;
 use std::sync::OnceLock;
 
 /// Structured logging output format.
-// (pyo3 0.20 has no `eq`/`eq_int` pyclass attributes; Python-side equality
-// is handled by comparing `.name` strings in `cello/logging.py`.)
-#[pyclass(name = "LogFormat")]
+// pyo3 0.20 simple enums compare by variant out of the box; `rename_all`
+// exposes them to Python as `LogFormat.TEXT` / `LogFormat.JSON`.
+#[pyclass(name = "LogFormat", rename_all = "SCREAMING_SNAKE_CASE")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogFormat {
     /// Human-readable, single-line text output.
@@ -68,7 +68,7 @@ impl Default for LoggingConfig {
 #[pyclass(name = "LoggingConfig")]
 #[derive(Clone)]
 pub struct PyLoggingConfig {
-    /// Output format: `LogFormat.Text` or `LogFormat.Json`.
+    /// Output format: `LogFormat.TEXT` or `LogFormat.JSON`.
     #[pyo3(get, set)]
     pub format: LogFormat,
     /// Log level filter: "trace", "debug", "info", "warn", "error".

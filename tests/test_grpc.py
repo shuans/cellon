@@ -142,6 +142,7 @@ class FakeRequest:
         return self._body
 
 
+@pytest.mark.asyncio
 async def test_grpc_web_dispatch():
     class EchoService(GrpcService):
         @grpc_method
@@ -164,6 +165,7 @@ async def test_grpc_web_dispatch():
     assert json.loads(payloads[0]) == {"echo": "hi"}
 
 
+@pytest.mark.asyncio
 async def test_grpc_web_unknown_service():
     server = GrpcServer(config=None)
     server._running = True

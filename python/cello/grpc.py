@@ -198,12 +198,6 @@ class GrpcService:
             for info in self._methods.values()
         ]
 
-    def get_methods(self) -> list[dict]:
-        return [
-            {"name": info["name"], "stream": info["stream"]}
-            for info in self._methods.values()
-        ]
-
     def get_name(self) -> str:
         return self._name
 

@@ -978,10 +978,28 @@ class GraphQL:
             stream = resolver(field_info, **arguments)
             if inspect.isawaitable(stream):
                 stream = await stream
-            if not hasattr(stream, "__aiter__"):
-                stream = iter((stream,))
-            async for value in stream:
+            async for value in _subscription_values(stream):
                 yield {"data": {field["alias"]: await _project_graphql_value(value, field["selection"], field_info)}}
+
+async def _subscription_values(stream):
+    """Normalize a resolver result into an async iterable of payload values.
+
+    Accepts async generators, sync iterables (awaiting coroutine items), and
+    single values such as dicts or primitives.
+    """
+    if hasattr(stream, "__aiter__"):
+        async for value in stream:
+            yield value
+        return
+    if isinstance(stream, dict) or not hasattr(stream, "__iter__"):
+        values = (stream,)
+    else:
+        values = stream
+    for value in values:
+        if inspect.isawaitable(value):
+            value = await value
+        yield value
+
 
     def get_schema(self) -> Dict[str, Any]:
         """
