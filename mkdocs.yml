@@ -5,8 +5,8 @@ site_name: Cellon
 site_url: https://cellon.kuloon.qzz.io
 site_description: Cellon - Ultra-Fast Python Web Framework - Rust-powered performance with Python simplicity
 site_author: shuans
-repo_url: https://github.com/shuans/cello
-repo_name: shuans/cello
+repo_url: https://github.com/shuans/cellon
+repo_name: shuans/cellon
 edit_uri: edit/main/docs/
 
 # Copyright
@@ -150,7 +150,7 @@ markdown_extensions:
   - pymdownx.magiclink:
       repo_url_shorthand: true
       user: shuans
-      repo: cello
+      repo: cellon
   - pymdownx.mark
   - pymdownx.smartsymbols
   - pymdownx.snippets:
@@ -172,10 +172,10 @@ extra:
   # Social links
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/jagadeesh32/cello
+      link: https://github.com/shuans/cellon
       name: GitHub
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/cello-framework/
+      link: https://pypi.org/project/cellon/
       name: PyPI
     - icon: fontawesome/brands/discord
       link: https://discord.gg/cello

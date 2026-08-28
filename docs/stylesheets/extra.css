@@ -27,7 +27,7 @@
   --c-text-muted:    #80868B;
   --c-link:          #BF360C;
   --c-sidebar-w:     260px;
-  --c-sidebar-w-col: 56px;
+  --c-sidebar-w-col: 200px;
 
   /* Override Material variables to use clean light colors only */
   --md-primary-fg-color:          #2D3748;
@@ -157,7 +157,7 @@ html {
     padding-top: 0.5rem !important;
   }
 
-    /* Primary sidebar is permanently narrow (icon only) */
+  /* Primary sidebar shows top-level items with icon + label text */
   .md-sidebar--primary {
     display: block !important;
     width: var(--c-sidebar-w-col, 56px) !important;
@@ -172,21 +172,28 @@ html {
     border-right: 1px solid var(--c-border) !important;
   }
 
-  /* Hide all text, chevron icons, and section titles in the primary sidebar */
-  .md-sidebar--primary .md-nav__link > span:not(.nav-icon-badge),
-  .md-sidebar--primary .md-nav__link .md-nav__icon,
-  .md-sidebar--primary .md-nav__title,
-  .md-sidebar--primary label.md-nav__link {
-    display: none !important;
-  }
+  /* Primary sidebar shows icon + label text */
   .md-sidebar--primary .md-nav__link {
-    justify-content: center !important;
-    padding: 0.3rem 0 !important;
+    justify-content: flex-start !important;
+    padding: 0.45rem 0.75rem !important;
+    gap: 0.5rem !important;
     border-left: none !important;
+  }
+  .md-sidebar--primary .md-nav__link .nav-icon-badge {
+    display: inline-flex !important;
+    width: 1.15rem;
+    flex-shrink: 0;
+    justify-content: center;
+  }
+  .md-sidebar--primary .md-nav__link .md-ellipsis {
+    display: inline !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .md-sidebar--primary .md-nav__link--active {
     border-left: none !important;
-    padding-left: 0 !important;
+    padding-left: 0.75rem !important;
   }
   .md-sidebar--primary .md-nav__item {
     padding-left: 0 !important;
