@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cellon"
-version = "1.4.1"
+version = "1.4.2"
 description = "Cellon: ultra-fast Rust-powered Python async web framework"
 readme = "README.md"
 license = { text = "MIT" }
