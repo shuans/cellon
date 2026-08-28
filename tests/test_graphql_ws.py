@@ -73,17 +73,15 @@ async def test_subscription_streams_next_and_complete():
     engine = GraphQL()
     engine.add_subscription(counter)
 
-    payload = json.dumps(
-        {
-            "type": "subscribe",
-            "id": "1",
-            "payload": {"query": "subscription { counter { value } }"},
-        }
+    # Drive the stream handler directly: a session-level `connection_terminate`
+    # cancels running subscriptions by design, so streaming is exercised at the
+    # handler layer.
+    ws = FakeWebSocket([])
+    from cello.graphql import _graphql_ws_stream
+
+    await _graphql_ws_stream(
+        ws, engine, "1", "subscription { counter { value } }", None, None
     )
-    ws = FakeWebSocket(
-        [payload, json.dumps({"type": "connection_terminate"})]
-    )
-    await graphql_ws_session(ws, engine)
 
     nexts = [msg for msg in ws.sent if msg["type"] == "next"]
     completes = [msg for msg in ws.sent if msg["type"] == "complete"]

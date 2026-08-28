@@ -981,26 +981,6 @@ class GraphQL:
             async for value in _subscription_values(stream):
                 yield {"data": {field["alias"]: await _project_graphql_value(value, field["selection"], field_info)}}
 
-async def _subscription_values(stream):
-    """Normalize a resolver result into an async iterable of payload values.
-
-    Accepts async generators, sync iterables (awaiting coroutine items), and
-    single values such as dicts or primitives.
-    """
-    if hasattr(stream, "__aiter__"):
-        async for value in stream:
-            yield value
-        return
-    if isinstance(stream, dict) or not hasattr(stream, "__iter__"):
-        values = (stream,)
-    else:
-        values = stream
-    for value in values:
-        if inspect.isawaitable(value):
-            value = await value
-        yield value
-
-
     def get_schema(self) -> Dict[str, Any]:
         """
         Return schema information describing all registered resolvers.
@@ -1051,6 +1031,26 @@ async def _subscription_values(stream):
             f"subscriptions={len(self._subscriptions)} "
             f"introspection={self._introspection_enabled}>"
         )
+
+
+async def _subscription_values(stream):
+    """Normalize a resolver result into an async iterable of payload values.
+
+    Accepts async generators, sync iterables (awaiting coroutine items), and
+    single values such as dicts or primitives.
+    """
+    if hasattr(stream, "__aiter__"):
+        async for value in stream:
+            yield value
+        return
+    if isinstance(stream, dict) or not hasattr(stream, "__iter__"):
+        values = (stream,)
+    else:
+        values = stream
+    for value in values:
+        if inspect.isawaitable(value):
+            value = await value
+        yield value
 
 
 class Schema:
@@ -1282,18 +1282,29 @@ async def graphql_ws_session(ws, engine: GraphQL):
                     payload.get("operationName"),
                 )
             )
+            # Yield so the new subscription task can start executing before
+            # the next incoming frame is processed (otherwise a fast
+            # connection_terminate would cancel it before its first tick).
+            await asyncio.sleep(0)
         elif msg_type == "complete":
             task = subscriptions.pop(op_id, None)
             if task is not None:
                 task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         else:
             await _graphql_ws_send(
                 ws,
                 {"type": "error", "id": op_id, "payload": {"message": f"Unsupported message type: {msg_type}"}},
             )
 
-    for task in subscriptions.values():
+    pending = list(subscriptions.values())
+    for task in pending:
         task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
     try:
         ws.close()
     except Exception:
@@ -1308,6 +1319,12 @@ async def _graphql_ws_stream(ws, engine: GraphQL, op_id, query, variables, opera
         async for payload in engine.subscribe(
             query, variables=variables, operation_name=operation_name
         ):
+            # Yield control to the event loop every iteration. Async-generator
+            # resolvers can yield without any real await, which would otherwise
+            # turn this loop into a synchronous busy-loop that never suspends:
+            # session frames (complete / connection_terminate) could not be
+            # processed and task.cancel() could never be delivered.
+            await asyncio.sleep(0)
             await _graphql_ws_send(ws, {"type": "next", "id": op_id, "payload": payload})
         await _graphql_ws_send(ws, {"type": "complete", "id": op_id})
     except asyncio.CancelledError:
