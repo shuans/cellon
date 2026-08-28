@@ -1,6 +1,6 @@
 ---
 title: Templates
-description: Jinja2-compatible template rendering in Cello Framework
+description: Jinja2-compatible template rendering in Cellon
 ---
 
 # Templates

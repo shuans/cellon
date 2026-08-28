@@ -18,23 +18,23 @@ hide:
 
 <!-- ===== HERO SECTION ===== -->
 
-# Cello Framework
+# Cellon
 
 <div class="hero-section" markdown>
 
 <div class="hero-logo">
-  <img src="logo.svg" alt="Cello Framework" style="height: 80px; width: auto; max-width: 100%;">
+  <img src="logo.svg" alt="Cellon" style="height: 80px; width: auto; max-width: 100%;">
 </div>
 
-<div class="hero-title">🔥 Cello Framework 🚀</div>
+<div class="hero-title">🔥 Cellon 🚀</div>
 
 <div class="hero-tagline">Ultra-Fast Python Web Framework</div>
 
 <div class="hero-subtitle">Rust-powered performance meets Python simplicity</div>
 
 [:material-rocket-launch: Get Started](getting-started/index.md){ .md-button .md-button--primary .md-button--lg }
-[:material-github: GitHub](https://github.com/jagadeesh32/cello){ .md-button }
-[:material-package-variant: PyPI](https://pypi.org/project/cello-framework/){ .md-button }
+[:material-github: GitHub](https://github.com/shuans/cello){ .md-button }
+[:material-package-variant: PyPI](https://pypi.org/project/cellon/){ .md-button }
 
 <div class="hero-badges">
   <code class="badge-version">v1.3.0</code>
@@ -461,7 +461,7 @@ We welcome contributions of all kinds. Whether it is a bug report, feature reque
 
     Found a bug or have a feature request? Open an issue on GitHub and help us improve Cello.
 
-    [:octicons-issue-opened-24: Open an Issue](https://github.com/jagadeesh32/cello/issues){ .md-button }
+    [:octicons-issue-opened-24: Open an Issue](https://github.com/shuans/cello/issues){ .md-button }
 
 -   :material-source-pull:{ .lg .middle } **Submit Pull Requests**
 
@@ -493,7 +493,7 @@ Designed for developers who refuse to compromise between performance and product
 
 <div class="star-btn" markdown>
 
-[:material-star: Star on GitHub](https://github.com/jagadeesh32/cello){ .md-button .md-button--primary }
+[:material-star: Star on GitHub](https://github.com/shuans/cello){ .md-button .md-button--primary }
 [:material-tag: Release Notes](releases/index.md){ .md-button }
 
 </div>

@@ -1,6 +1,6 @@
 ---
 title: Compression Middleware
-description: Response compression in Cello Framework
+description: Response compression in Cellon
 ---
 
 # Compression Middleware

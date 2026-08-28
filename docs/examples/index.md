@@ -29,7 +29,7 @@ Get any example running in under a minute.
 
 ```bash
 # Clone the repository
-git clone https://github.com/jagadeesh32/cello.git
+git clone https://github.com/shuans/cello.git
 cd cello
 
 # Set up the environment with Python 3.12 explicitly
@@ -484,4 +484,4 @@ Which features are used in each example? Select a difficulty level:
 
 ## :material-github: More Examples
 
-Browse the full collection of examples in the [GitHub repository](https://github.com/jagadeesh32/cello/tree/main/examples). Contributions are welcome — see the [Contributing Guide](../community/contributing.md) to add your own example.
+Browse the full collection of examples in the [GitHub repository](https://github.com/shuans/cello/tree/main/examples). Contributions are welcome — see the [Contributing Guide](../community/contributing.md) to add your own example.

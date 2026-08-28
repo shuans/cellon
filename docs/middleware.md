@@ -121,5 +121,5 @@ $ for i in $(seq 5); do curl -s -o /dev/null -w "%{http_code} " http://127.0.0.1
 
 ## Runnable example
 
-[`examples/middleware_full_demo.py`](https://github.com/jagadeesh32/cello/blob/main/examples/middleware_full_demo.py)
+[`examples/middleware_full_demo.py`](https://github.com/shuans/cello/blob/main/examples/middleware_full_demo.py)
 wires up all seven with a route that makes each one observable.

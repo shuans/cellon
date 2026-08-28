@@ -1,6 +1,6 @@
 ---
 title: Async Support
-description: Async and sync handler support in Cello Framework
+description: Async and sync handler support in Cellon
 ---
 
 # Async Support

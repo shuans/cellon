@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Application configuration options in Cello Framework
+description: Application configuration options in Cellon Framework
 ---
 
 # Configuration

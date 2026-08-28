@@ -1,6 +1,6 @@
 ---
 title: Request Handling
-description: Working with HTTP requests in Cello Framework
+description: Working with HTTP requests in Cellon
 ---
 
 # Request Handling

@@ -1,6 +1,6 @@
 ---
 title: CORS Middleware
-description: Cross-Origin Resource Sharing (CORS) configuration in Cello Framework
+description: Cross-Origin Resource Sharing (CORS) configuration in Cellon
 ---
 
 # CORS Middleware

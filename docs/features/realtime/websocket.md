@@ -1,6 +1,6 @@
 ---
 title: WebSocket
-description: Real-time bidirectional communication with WebSocket in Cello Framework
+description: Real-time bidirectional communication with WebSocket in Cellon
 ---
 
 # WebSocket

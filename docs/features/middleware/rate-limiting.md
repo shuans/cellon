@@ -1,6 +1,6 @@
 ---
 title: Rate Limiting
-description: Request rate limiting in Cello Framework
+description: Request rate limiting in Cellon
 ---
 
 # Rate Limiting

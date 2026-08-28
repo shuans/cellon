@@ -1,6 +1,6 @@
 ---
 title: gRPC Integration
-description: gRPC support in Cello Framework - JSON generic services, methods, and server streaming
+description: gRPC support in Cellon - JSON generic services, methods, and server streaming
 ---
 
 # gRPC Integration

@@ -1,6 +1,6 @@
 ---
 title: Your First App
-description: Build a complete REST API step-by-step with Cello Framework
+description: Build a complete REST API step-by-step with Cellon Framework
 ---
 
 # Your First App
@@ -36,7 +36,7 @@ python --version  # Must be Python 3.12+
 
 ```bash
 python -m pip install maturin
-git clone https://github.com/jagadeesh32/cello.git
+git clone https://github.com/shuans/cello.git
 cd cello
 python -m maturin develop
 cd ..

@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Get up and running with Cello Framework in minutes
+description: Get up and running with Cellon Framework in minutes
 icon: material/rocket-launch
 tags:
   - Python
@@ -120,7 +120,7 @@ Cello running at http://127.0.0.1:8000
     === "From Source"
 
         ```bash
-        git clone https://github.com/jagadeesh32/cello.git
+        git clone https://github.com/shuans/cello.git
         cd cello && pip install maturin && maturin develop
         ```
 
@@ -259,7 +259,7 @@ Once you've built your first app, explore these areas to level up:
     Have questions? Want to share what you're building? Join the community:
 
     - :material-discord: **[Discord Server](https://discord.gg/cello)** -- Real-time help and discussion
-    - :material-github: **[GitHub Discussions](https://github.com/jagadeesh32/cello/discussions)** -- Feature requests and Q&A
+    - :material-github: **[GitHub Discussions](https://github.com/shuans/cello/discussions)** -- Feature requests and Q&A
     - :material-stack-overflow: **[Stack Overflow](https://stackoverflow.com/questions/tagged/cello-framework)** -- Tagged questions and answers
 
     We'd love to hear from you!

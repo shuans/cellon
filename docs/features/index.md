@@ -1,6 +1,6 @@
 ---
 title: Features
-description: Comprehensive feature documentation for Cello Framework - every capability at your fingertips
+description: Comprehensive feature documentation for Cellon - every capability at your fingertips
 icon: material/star-shooting
 tags:
   - Python
@@ -29,7 +29,7 @@ tags:
 
 ```mermaid
 mindmap
-  root((Cello Framework))
+  root((Cellon))
     Core
       Routing
       Requests

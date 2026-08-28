@@ -1,6 +1,6 @@
 ---
 title: JWT Authentication
-description: JSON Web Token authentication in Cello Framework
+description: JSON Web Token authentication in Cellon
 ---
 
 # JWT Authentication

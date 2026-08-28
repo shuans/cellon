@@ -1,6 +1,6 @@
 ---
 title: Session Management
-description: Secure cookie-based session management in Cello Framework
+description: Secure cookie-based session management in Cellon
 ---
 
 # Session Management

@@ -1,6 +1,6 @@
 ---
 title: Dependency Injection
-description: Decorator-based dependency injection system in Cello Framework
+description: Decorator-based dependency injection system in Cellon
 ---
 
 # Dependency Injection

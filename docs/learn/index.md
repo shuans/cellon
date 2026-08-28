@@ -1,6 +1,6 @@
 ---
 title: Learn
-description: Tutorials, guides, and patterns for mastering Cello Framework
+description: Tutorials, guides, and patterns for mastering Cellon
 icon: material/school
 ---
 
@@ -274,7 +274,7 @@ Proven patterns for building robust, maintainable applications at scale.
 
 !!! tip "Learn with the Community"
 
-    - :material-github: **[GitHub Discussions](https://github.com/jagadeesh32/cello/discussions)** -- Ask questions, share ideas
+    - :material-github: **[GitHub Discussions](https://github.com/shuans/cello/discussions)** -- Ask questions, share ideas
     - :material-discord: **[Discord Server](https://discord.gg/cello)** -- Real-time chat with other developers
     - :material-stack-overflow: **[Stack Overflow](https://stackoverflow.com/questions/tagged/cello-framework)** -- Browse tagged Q&A
     - :material-pencil: **[Contributing a Tutorial](../community/contributing.md)** -- Share your knowledge with others

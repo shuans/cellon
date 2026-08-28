@@ -1,6 +1,6 @@
 ---
 title: Background Tasks
-description: Post-response task execution in Cello Framework
+description: Post-response task execution in Cellon
 ---
 
 # Background Tasks

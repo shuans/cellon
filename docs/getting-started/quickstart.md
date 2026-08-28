@@ -251,7 +251,7 @@ python app.py --debug
 
     ---
 
-    Explore all Cello features
+    Explore all Cellon features
 
     [:octicons-arrow-right-24: Features](../features/index.md)
 

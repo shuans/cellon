@@ -1,6 +1,6 @@
 ---
 title: Security Headers
-description: Security headers configuration in Cello Framework - CSP, HSTS, X-Frame-Options
+description: Security headers configuration in Cellon - CSP, HSTS, X-Frame-Options
 ---
 
 # Security Headers

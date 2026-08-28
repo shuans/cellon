@@ -1,6 +1,6 @@
 ---
 title: Contributing
-description: How to contribute to Cello Framework
+description: How to contribute to Cellon
 ---
 
 # Contributing to Cello
@@ -290,7 +290,7 @@ Be responsive to feedback and willing to make changes.
 ## Getting Help
 
 - :material-discord: [Discord](https://discord.gg/cello) - Development chat
-- :material-github: [GitHub Discussions](https://github.com/jagadeesh32/cello/discussions) - Questions
+- :material-github: [GitHub Discussions](https://github.com/shuans/cello/discussions) - Questions
 - :material-email: [Email](mailto:dev@cello-framework.dev) - Direct contact
 
 ---

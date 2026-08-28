@@ -1,6 +1,6 @@
 ---
 title: Guards (RBAC)
-description: Role-based access control with composable guards in Cello Framework
+description: Role-based access control with composable guards in Cellon
 ---
 
 # Guards (RBAC)

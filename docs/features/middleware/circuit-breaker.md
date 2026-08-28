@@ -1,6 +1,6 @@
 ---
 title: Circuit Breaker
-description: Circuit breaker middleware for fault tolerance in Cello Framework
+description: Circuit breaker middleware for fault tolerance in Cellon
 ---
 
 # Circuit Breaker

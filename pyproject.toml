@@ -31,7 +31,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/shuans/cellon"
 Repository = "https://github.com/shuans/cellon"
-Documentation = "https://cello.lineupcode.com/"
+Documentation = "https://cellon.kuloon.qzz.io/"
 
 [project.optional-dependencies]
 dev = [

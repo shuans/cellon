@@ -572,7 +572,7 @@ def dashboard(request):
 
 if __name__ == "__main__":
     print("\n" + "=" * 80)
-    print("🎸 Cello Framework - Advanced Features Comprehensive Demo")
+    print("🎸 Cellon - Advanced Features Comprehensive Demo")
     print("=" * 80)
     print("\n✨ New Features Demonstrated:")
     print("   1. ✅ Dependency Injection")

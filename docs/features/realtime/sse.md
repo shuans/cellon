@@ -1,6 +1,6 @@
 ---
 title: Server-Sent Events
-description: Server-push streaming with SSE in Cello Framework
+description: Server-push streaming with SSE in Cellon
 ---
 
 # Server-Sent Events (SSE)

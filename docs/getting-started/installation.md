@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install Cello Framework on your system
+description: Install Cellon Framework on your system
 tags:
   - Installation
   - Getting Started
@@ -11,7 +11,7 @@ tags:
 
 # Installation
 
-This guide covers all installation methods for Cello Framework.
+This guide covers all installation methods for Cellon Framework.
 
 ## Requirements
 
@@ -49,7 +49,7 @@ For the latest development version or to contribute:
 
 ```bash
 # Clone the repository
-git clone https://github.com/jagadeesh32/cello.git
+git clone https://github.com/shuans/cello.git
 cd cello
 
 # Create the environment with Python 3.12 explicitly.
@@ -75,7 +75,7 @@ python -m maturin develop --release
 Install directly from GitHub:
 
 ```bash
-pip install git+https://github.com/jagadeesh32/cello.git
+pip install git+https://github.com/shuans/cello.git
 # The import-compatible package name remains: from cello import App
 ```
 

@@ -1,6 +1,6 @@
 ---
 title: REST API
-description: Complete REST API example with CRUD operations in Cello Framework
+description: Complete REST API example with CRUD operations in Cellon
 ---
 
 # REST API Example

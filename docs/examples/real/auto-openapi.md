@@ -22,7 +22,7 @@ Cello can introspect your route table and generate a complete OpenAPI 3.x specif
 ```python
 #!/usr/bin/env python3
 """
-Cello Framework - Auto-Generated OpenAPI Demo
+Cellon - Auto-Generated OpenAPI Demo
 Run with: python examples/auto_openapi_demo.py
 Then visit: http://127.0.0.1:8080/docs
 """

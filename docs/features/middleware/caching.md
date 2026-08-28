@@ -1,6 +1,6 @@
 ---
 title: Caching Middleware
-description: Smart response caching in Cello Framework
+description: Smart response caching in Cellon
 ---
 
 # Caching Middleware

@@ -1,6 +1,6 @@
 ---
 title: Tags
-description: Browse all Cello Framework documentation by topic tags — find guides, examples, and reference docs by category
+description: Browse all Cellon documentation by topic tags — find guides, examples, and reference docs by category
 tags:
   - Python
   - Web Framework

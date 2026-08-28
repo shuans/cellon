@@ -1,6 +1,6 @@
 ---
 title: Project Structure
-description: Recommended project layout for Cello Framework applications
+description: Recommended project layout for Cellon Framework applications
 ---
 
 # Project Structure

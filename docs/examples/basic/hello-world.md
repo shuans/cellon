@@ -1,6 +1,6 @@
 ---
 title: Hello World
-description: Hello World example with full code walkthrough for Cello Framework
+description: Hello World example with full code walkthrough for Cellon
 ---
 
 # Hello World

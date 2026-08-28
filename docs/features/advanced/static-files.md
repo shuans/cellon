@@ -1,6 +1,6 @@
 ---
 title: Static Files
-description: Efficient static file serving in Cello Framework
+description: Efficient static file serving in Cellon
 ---
 
 # Static Files

@@ -1,6 +1,6 @@
 ---
 title: Message Queue Integration
-description: Kafka, RabbitMQ, and SQS support in Cello Framework
+description: Kafka, RabbitMQ, and SQS support in Cellon
 ---
 
 # Message Queue Integration

@@ -1,6 +1,6 @@
 ---
 title: Response Types
-description: HTTP response types and builders in Cello Framework
+description: HTTP response types and builders in Cellon
 ---
 
 # Response Types

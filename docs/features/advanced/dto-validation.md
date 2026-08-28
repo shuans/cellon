@@ -1,6 +1,6 @@
 ---
 title: DTOs & Validation
-description: Data Transfer Objects and validation in Cello Framework
+description: Data Transfer Objects and validation in Cellon
 ---
 
 # DTOs & Validation

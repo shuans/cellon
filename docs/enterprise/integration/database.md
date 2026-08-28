@@ -1,6 +1,6 @@
 ---
 title: Database Integration
-description: Database connection pooling and Redis integration in Cello Framework
+description: Database connection pooling and Redis integration in Cellon
 ---
 
 # Database Integration

@@ -1,11 +1,11 @@
 ---
 title: Enterprise Roadmap
-description: Upcoming enterprise features for Cello Framework
+description: Upcoming enterprise features for Cellon
 ---
 
 # Enterprise Roadmap
 
-This roadmap outlines planned enterprise features for Cello Framework, based on research of industry best practices for building production-grade web services.
+This roadmap outlines planned enterprise features for Cellon, based on research of industry best practices for building production-grade web services.
 
 ## Timeline Overview
 
@@ -283,7 +283,7 @@ async def tenant_middleware(request, call_next):
 
 ## Feature Requests
 
-Have a feature request? Submit it on [GitHub Issues](https://github.com/jagadeesh32/cello/issues/new?template=feature_request.md).
+Have a feature request? Submit it on [GitHub Issues](https://github.com/shuans/cello/issues/new?template=feature_request.md).
 
 We prioritize features based on:
 - Community demand

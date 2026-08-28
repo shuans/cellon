@@ -1,6 +1,6 @@
 ---
 title: Blueprints
-description: Route grouping with Blueprints in Cello Framework
+description: Route grouping with Blueprints in Cellon
 ---
 
 # Blueprints

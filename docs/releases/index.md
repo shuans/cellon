@@ -1,6 +1,6 @@
 ---
 title: Release Notes
-description: Version history, changelogs, and migration guides for every Cello Framework release
+description: Version history, changelogs, and migration guides for every Cellon release
 icon: material/tag-multiple
 tags:
   - Release Notes
@@ -37,7 +37,7 @@ tags:
 
 ```mermaid
 timeline
-    title Cello Framework Releases
+    title Cellon Releases
     2026-07 : v1.3.0 - Async Rework, Native Data Layer, Plugin Audit & Three-Pillar Upgrades
     2026-06 : v1.2.4 - Critical Fix: async def Handlers
             : v1.2.3 - Full Middleware Python API & Docs Fixes
@@ -312,6 +312,6 @@ timeline
 
 ## :material-bell-ring: Stay Updated
 
-- :material-star: [Star the repo on GitHub](https://github.com/jagadeesh32/cello) to show support and get notified
-- :material-rss: [Releases RSS Feed](https://github.com/jagadeesh32/cello/releases.atom) for automated notifications
+- :material-star: [Star the repo on GitHub](https://github.com/shuans/cello) to show support and get notified
+- :material-rss: [Releases RSS Feed](https://github.com/shuans/cello/releases.atom) for automated notifications
 - :fontawesome-brands-discord: [Join Discord](https://discord.gg/cello) for release announcements and discussion

@@ -1,6 +1,6 @@
 ---
 title: CSRF Protection
-description: Cross-Site Request Forgery protection in Cello Framework
+description: Cross-Site Request Forgery protection in Cellon
 ---
 
 # CSRF Protection

@@ -1,6 +1,6 @@
 ---
 title: Security Overview
-description: Security features in Cello Framework
+description: Security features in Cellon
 ---
 
 # Security Overview

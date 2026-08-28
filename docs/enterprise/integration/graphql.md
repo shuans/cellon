@@ -1,6 +1,6 @@
 ---
 title: GraphQL Integration
-description: GraphQL support in Cello Framework - queries, mutations, subscriptions, and DataLoader
+description: GraphQL support in Cellon - queries, mutations, subscriptions, and DataLoader
 ---
 
 # GraphQL Integration

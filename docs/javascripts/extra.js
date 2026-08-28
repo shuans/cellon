@@ -1,4 +1,4 @@
-/* Cello Framework – Custom JS */
+/* Cellon – Custom JS */
 (function () {
   "use strict";
 

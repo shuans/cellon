@@ -20,10 +20,10 @@ This comprehensive showcase demonstrates the integration of all Cello features. 
 ```python
 #!/usr/bin/env python3
 """
-Cello Framework - Complete Feature Showcase
+Cellon - Complete Feature Showcase
 ============================================
 
-This example demonstrates ALL features of the Cello framework.
+This example demonstrates ALL features of the Cellon.
 Run with: python examples/complete_showcase.py
 Then visit: http://127.0.0.1:8080
 
@@ -105,7 +105,7 @@ def log_analytics_task(event: str, data: dict):
 def home(request):
     """Home endpoint - API overview."""
     return {
-        "message": "Welcome to Cello Framework!",
+        "message": "Welcome to Cellon!",
         "version": "1.3.0",
         "endpoints": {
             "docs": "/docs",
@@ -419,7 +419,7 @@ def websocket_info(request):
 
 if __name__ == "__main__":
     print("\n" + "="*60)
-    print("  CELLO FRAMEWORK - COMPLETE FEATURE SHOWCASE")
+    print("  CELLON - COMPLETE FEATURE SHOWCASE")
     print("="*60)
     print("\n  Endpoints available:")
     print("    - Home:        http://127.0.0.1:8080/")

@@ -1,6 +1,6 @@
 ---
 title: Authentication
-description: Authentication methods in Cello Framework - JWT, Basic Auth, API Key
+description: Authentication methods in Cellon - JWT, Basic Auth, API Key
 ---
 
 # Authentication

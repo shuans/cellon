@@ -15,7 +15,7 @@ Need help with Cello? This page lists all the ways to get support, report issues
 
 The primary channel for bug reports, feature requests, and technical questions.
 
-- **Repository:** [github.com/jagadeesh32/cello](https://github.com/jagadeesh32/cello)
+- **Repository:** [github.com/shuans/cello](https://github.com/shuans/cello)
 - **Bug reports:** Use the "Bug Report" issue template
 - **Feature requests:** Use the "Feature Request" issue template
 - **Questions:** Use the "Question" label
@@ -29,7 +29,7 @@ Before opening a new issue:
 
 ### GitHub Discussions
 
-For open-ended questions, ideas, and community conversations, use [GitHub Discussions](https://github.com/jagadeesh32/cello/discussions).
+For open-ended questions, ideas, and community conversations, use [GitHub Discussions](https://github.com/shuans/cello/discussions).
 
 ---
 
@@ -59,7 +59,7 @@ We welcome contributions of all kinds:
 - **Features** -- Discuss in an issue first, then implement
 - **Tests** -- Increase test coverage
 
-See the [contribution guidelines](https://github.com/jagadeesh32/cello/blob/main/CONTRIBUTING.md) for details on the development workflow.
+See the [contribution guidelines](https://github.com/shuans/cello/blob/main/CONTRIBUTING.md) for details on the development workflow.
 
 ---
 
@@ -88,7 +88,7 @@ python -m maturin develop
 
 ### How do I report a bug?
 
-Open an issue on [GitHub](https://github.com/jagadeesh32/cello/issues) with:
+Open an issue on [GitHub](https://github.com/shuans/cello/issues) with:
 
 - Cello version
 - Python version
@@ -114,7 +114,7 @@ The `examples/` directory in the repository contains 20+ example applications co
 
 | Resource | URL |
 |----------|-----|
-| GitHub Repository | [github.com/jagadeesh32/cello](https://github.com/jagadeesh32/cello) |
-| Issue Tracker | [github.com/jagadeesh32/cello/issues](https://github.com/jagadeesh32/cello/issues) |
+| GitHub Repository | [github.com/shuans/cello](https://github.com/shuans/cello) |
+| Issue Tracker | [github.com/shuans/cello/issues](https://github.com/shuans/cello/issues) |
 | Release Notes | [Releases](../releases/v1.3.0.md) |
 | License | MIT |

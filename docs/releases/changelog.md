@@ -1,11 +1,11 @@
 ---
 title: Changelog
-description: Complete changelog for all Cello Framework releases
+description: Complete changelog for all Cellon releases
 ---
 
 # Changelog
 
-All notable changes to the Cello Framework are documented here. Each version links to its full release notes for detailed descriptions and code examples.
+All notable changes to the Cellon are documented here. Each version links to its full release notes for detailed descriptions and code examples.
 
 ---
 

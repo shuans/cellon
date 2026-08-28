@@ -104,7 +104,7 @@ def delete_user(request):
 
 product_service = Blueprint("/api/v1/products")
 _products = {
-    "1": {"id": "1", "name": "Cello Framework License", "price": 0.00, "stock": 999},
+    "1": {"id": "1", "name": "Cellon License", "price": 0.00, "stock": 999},
     "2": {"id": "2", "name": "Premium Support", "price": 99.00, "stock": 50},
 }
 _product_next_id = 3

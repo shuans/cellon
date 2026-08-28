@@ -1,6 +1,6 @@
 ---
 title: Logging Middleware
-description: Request and response logging in Cello Framework
+description: Request and response logging in Cellon
 ---
 
 # Logging Middleware

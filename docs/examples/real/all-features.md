@@ -20,10 +20,10 @@ This comprehensive demo maps and exercises every major API surface in Cello. It 
 ```python
 #!/usr/bin/env python3
 """
-Cello Framework - ALL FEATURES DEMO
+Cellon - ALL FEATURES DEMO
 =====================================
 
-This example demonstrates EVERY feature of Cello framework.
+This example demonstrates EVERY feature of Cellon.
 
 Run: python examples/all_features_demo.py
 Visit: http://127.0.0.1:8080/
@@ -127,7 +127,7 @@ def cleanup_temp_files_task():
 def home(request):
     """API Home - Lists all available endpoints."""
     return {
-        "message": "Welcome to Cello Framework - ALL Features Demo!",
+        "message": "Welcome to Cellon - ALL Features Demo!",
         "version": "1.3.0",
         "features": {
             "core": ["/routing", "/async", "/blueprints", "/sse", "/multipart"],
@@ -269,7 +269,7 @@ def html_response(request):
     </head>
     <body>
         <div class="card">
-            <h1>🐍 Cello Framework</h1>
+            <h1>🐍 Cellon</h1>
             <p>This is an HTML response from Cello!</p>
             <p><a href="/docs">View API Documentation</a></p>
         </div>
@@ -598,7 +598,7 @@ app.enable_openapi(title="Cello ALL Features API", version="1.3.0")
 
 if __name__ == "__main__":
     print("\n" + "="*70)
-    print("  🐍 CELLO FRAMEWORK - ALL FEATURES DEMO")
+    print("  🐍 CELLON - ALL FEATURES DEMO")
     print("="*70)
     print("\n  Core Features:")
     print("    - Routing:     GET, POST, PUT, PATCH, DELETE")

@@ -21,7 +21,7 @@ Cello's middleware story goes well beyond simple request/response transformation
 
 ```python
 """
-Advanced Middleware Example for Cello Framework
+Advanced Middleware Example for Cellon
 Run with: python examples/advanced_middleware.py
 Then visit: http://localhost:8000/docs
 """

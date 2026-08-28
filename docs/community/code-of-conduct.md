@@ -61,7 +61,7 @@ This Code of Conduct also applies when an individual is officially representing 
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by:
 
-- Opening a private issue on the [GitHub repository](https://github.com/jagadeesh32/cello)
+- Opening a private issue on the [GitHub repository](https://github.com/shuans/cello)
 - Contacting the maintainers directly via email
 
 All complaints will be reviewed and investigated promptly and fairly. All community maintainers are obligated to respect the privacy and security of the reporter.

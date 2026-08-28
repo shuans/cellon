@@ -1,6 +1,6 @@
 ---
 title: API Reference & Configuration
-description: Complete technical reference for every class, method, and configuration option in Cello Framework
+description: Complete technical reference for every class, method, and configuration option in Cellon
 icon: material/book-open-page-variant
 ---
 
@@ -10,7 +10,7 @@ icon: material/book-open-page-variant
 
 !!! abstract "Everything you need to build with Cello"
 
-    This section provides the **complete technical reference** for every public API, configuration option, CLI flag, and error code in the Cello Framework. Use it as your go-to lookup while developing.
+    This section provides the **complete technical reference** for every public API, configuration option, CLI flag, and error code in the Cellon. Use it as your go-to lookup while developing.
 
 </div>
 

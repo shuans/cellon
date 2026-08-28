@@ -19,7 +19,7 @@ This example demonstrates how to implement three advanced architectural patterns
 ```python
 #!/usr/bin/env python3
 """
-Cello Framework v1.3.0 - Advanced Patterns Demo
+Cellon v1.3.0 - Advanced Patterns Demo
 ================================================
 
 Demonstrates the three major architectural patterns introduced in v1.3.0:
@@ -993,7 +993,7 @@ async def on_shutdown():
 if __name__ == "__main__":
     print("""
     ================================================================
-    Cello Framework v1.3.0 - Advanced Patterns Demo
+    Cellon v1.3.0 - Advanced Patterns Demo
     ================================================================
 
     Features demonstrated:

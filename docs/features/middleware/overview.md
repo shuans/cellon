@@ -1,6 +1,6 @@
 ---
 title: Middleware Overview
-description: How the middleware system works in Cello Framework
+description: How the middleware system works in Cellon
 ---
 
 # Middleware Overview

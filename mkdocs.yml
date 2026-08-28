@@ -1,12 +1,12 @@
 # Material for MkDocs Configuration
 # https://squidfunk.github.io/mkdocs-material/
 
-site_name: Cello Framework
-site_url: https://cello.lineupcode.com
-site_description: Ultra-Fast Python Web Framework - Rust-powered performance with Python simplicity
-site_author: Jagadeesh Katla
-repo_url: https://github.com/jagadeesh32/cello
-repo_name: jagadeesh32/cello
+site_name: Cellon
+site_url: https://cellon.kuloon.qzz.io
+site_description: Cellon - Ultra-Fast Python Web Framework - Rust-powered performance with Python simplicity
+site_author: shuans
+repo_url: https://github.com/shuans/cello
+repo_name: shuans/cello
 edit_uri: edit/main/docs/
 
 # Copyright
@@ -24,8 +24,8 @@ theme:
   language: en
 
   # Logo and favicon
-  logo: logo-icon.svg
-  favicon: logo.jpg
+  logo: logo-icon.png
+  favicon: favicon.png
 
   # Color palette - light only
   palette:
@@ -149,7 +149,7 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.magiclink:
       repo_url_shorthand: true
-      user: jagadeesh32
+      user: shuans
       repo: cello
   - pymdownx.mark
   - pymdownx.smartsymbols

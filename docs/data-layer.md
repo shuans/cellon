@@ -198,6 +198,6 @@ drop to raw `request.database` queries, which cover everything.
 
 ## Runnable example
 
-See [`examples/database_orm_demo.py`](https://github.com/jagadeesh32/cello/blob/main/examples/database_orm_demo.py)
+See [`examples/database_orm_demo.py`](https://github.com/shuans/cello/blob/main/examples/database_orm_demo.py)
 for a complete app using raw queries, transactions, the ORM, and Redis caching
 against real servers.

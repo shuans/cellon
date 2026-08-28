@@ -1,6 +1,6 @@
 ---
 title: Community
-description: Join the Cello Framework community -- contribute, get support, and connect with other developers
+description: Join the Cellon community -- contribute, get support, and connect with other developers
 icon: material/account-group
 tags:
   - Community
@@ -123,7 +123,7 @@ Contributing to Cello is straightforward. Follow these steps to go from zero to 
 
     Look for issues labeled **`good first issue`** -- these are specifically curated for newcomers:
 
-    [:octicons-arrow-right-24: Good First Issues](https://github.com/jagadeesh32/cello/labels/good%20first%20issue){ .md-button }
+    [:octicons-arrow-right-24: Good First Issues](https://github.com/shuans/cello/labels/good%20first%20issue){ .md-button }
 
 ---
 
@@ -133,10 +133,10 @@ Not sure where to start? There are many ways to help beyond writing code.
 
 | Contribution | Description | Getting Started |
 |:-------------|:------------|:----------------|
-| :material-bug: **Report Bugs** | Found something broken? File an issue with reproduction steps. | [Open a Bug Report](https://github.com/jagadeesh32/cello/issues/new?template=bug_report.md) |
-| :material-lightbulb: **Request Features** | Have an idea for Cello? We would love to hear it. | [Open a Feature Request](https://github.com/jagadeesh32/cello/issues/new?template=feature_request.md) |
+| :material-bug: **Report Bugs** | Found something broken? File an issue with reproduction steps. | [Open a Bug Report](https://github.com/shuans/cello/issues/new?template=bug_report.md) |
+| :material-lightbulb: **Request Features** | Have an idea for Cello? We would love to hear it. | [Open a Feature Request](https://github.com/shuans/cello/issues/new?template=feature_request.md) |
 | :material-code-tags: **Contribute Code** | Fix bugs, add features, or optimize Rust performance. | [Contributing Guide](contributing.md) |
-| :material-book-open-variant: **Improve Docs** | Fix typos, add examples, clarify explanations. | [Edit on GitHub](https://github.com/jagadeesh32/cello/tree/main/docs) |
+| :material-book-open-variant: **Improve Docs** | Fix typos, add examples, clarify explanations. | [Edit on GitHub](https://github.com/shuans/cello/tree/main/docs) |
 | :material-translate: **Translate** | Help make the docs accessible in more languages. | [Discord #translations](https://discord.gg/cello) |
 | :material-help-circle: **Help Others** | Answer questions on Discord or Stack Overflow. | [Discord](https://discord.gg/cello) |
 
@@ -152,7 +152,7 @@ Not sure where to start? There are many ways to help beyond writing code.
 
     Show your support by starring the repository on GitHub.
 
-    [:octicons-arrow-right-24: Star on GitHub](https://github.com/jagadeesh32/cello)
+    [:octicons-arrow-right-24: Star on GitHub](https://github.com/shuans/cello)
 
 -   :material-source-fork:{ .lg .middle } **Forks**
 
@@ -160,7 +160,7 @@ Not sure where to start? There are many ways to help beyond writing code.
 
     Fork the project to start contributing or experiment with your own changes.
 
-    [:octicons-arrow-right-24: Fork on GitHub](https://github.com/jagadeesh32/cello/fork)
+    [:octicons-arrow-right-24: Fork on GitHub](https://github.com/shuans/cello/fork)
 
 -   :material-account-multiple:{ .lg .middle } **Contributors**
 
@@ -168,7 +168,7 @@ Not sure where to start? There are many ways to help beyond writing code.
 
     Join the growing list of developers who have contributed to Cello.
 
-    [:octicons-arrow-right-24: View Contributors](https://github.com/jagadeesh32/cello/graphs/contributors)
+    [:octicons-arrow-right-24: View Contributors](https://github.com/shuans/cello/graphs/contributors)
 
 -   :material-source-branch:{ .lg .middle } **Open Issues**
 
@@ -176,7 +176,7 @@ Not sure where to start? There are many ways to help beyond writing code.
 
     Browse open issues and help close them. Every fix counts.
 
-    [:octicons-arrow-right-24: View Issues](https://github.com/jagadeesh32/cello/issues)
+    [:octicons-arrow-right-24: View Issues](https://github.com/shuans/cello/issues)
 
 </div>
 
@@ -187,10 +187,10 @@ Not sure where to start? There are many ways to help beyond writing code.
 | Channel | Best For | Link |
 |:--------|:---------|:-----|
 | :fontawesome-brands-discord: **Discord** | Real-time help, announcements, casual chat | [Join Discord](https://discord.gg/cello) |
-| :material-github: **GitHub Discussions** | Long-form questions, ideas, show-and-tell | [Discussions](https://github.com/jagadeesh32/cello/discussions) |
+| :material-github: **GitHub Discussions** | Long-form questions, ideas, show-and-tell | [Discussions](https://github.com/shuans/cello/discussions) |
 | :material-stack-overflow: **Stack Overflow** | Searchable Q&A (tag: `cello-framework`) | [Stack Overflow](https://stackoverflow.com/questions/tagged/cello-framework) |
 | :fontawesome-brands-x-twitter: **X / Twitter** | News, release announcements | [@CelloFramework](https://twitter.com/CelloFramework) |
-| :material-rss: **RSS Feed** | Automated release notifications | [Releases Feed](https://github.com/jagadeesh32/cello/releases.atom) |
+| :material-rss: **RSS Feed** | Automated release notifications | [Releases Feed](https://github.com/shuans/cello/releases.atom) |
 
 ---
 
@@ -219,9 +219,9 @@ Cello is made possible by the work of these people and projects.
 
 !!! example "Ready to dive in?"
 
-    The best way to join the community is to start building. Pick an [example](../examples/index.md), read the [getting started guide](../getting-started/index.md), or jump straight into the [open issues](https://github.com/jagadeesh32/cello/issues).
+    The best way to join the community is to start building. Pick an [example](../examples/index.md), read the [getting started guide](../getting-started/index.md), or jump straight into the [open issues](https://github.com/shuans/cello/issues).
 
     [:octicons-arrow-right-24: Get Started](../getting-started/index.md){ .md-button .md-button--primary }
-    [:octicons-arrow-right-24: Browse Issues](https://github.com/jagadeesh32/cello/issues){ .md-button }
+    [:octicons-arrow-right-24: Browse Issues](https://github.com/shuans/cello/issues){ .md-button }
 
 </div>
