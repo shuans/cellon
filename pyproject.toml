@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cellon"
-version = "1.4.0"
+version = "1.4.1"
 description = "Cellon: ultra-fast Rust-powered Python async web framework"
 readme = "README.md"
 license = { text = "MIT" }
@@ -29,8 +29,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jagadeesh32/cello"
-Repository = "https://github.com/jagadeesh32/cello"
+Homepage = "https://github.com/shuans/cellon"
+Repository = "https://github.com/shuans/cellon"
 Documentation = "https://cello.lineupcode.com/"
 
 [project.optional-dependencies]

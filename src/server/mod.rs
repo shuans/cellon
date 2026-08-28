@@ -1060,6 +1060,21 @@ where
     let uri = req.uri().clone();
     let path = uri.path();
 
+    // Lightweight request for the error-handler chain (method/path context only;
+    // body/params/query are filled in later). Shared by every
+    // `build_hyper_response` call so error handlers get consistent context.
+    let error_request = Request::from_http(
+        method_str.to_owned(),
+        path.to_owned(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        Vec::new(),
+    );
+    let build_resp = |response: &Response| {
+        build_hyper_response(response, metrics, error_handlers, Some(&error_request))
+    };
+
     // PERF: Route match FIRST - fail fast on 404 before any allocation
     let route_match = router.match_route(method_str, path);
 
@@ -1072,7 +1087,7 @@ where
                 let prom_guard = prometheus.read();
                 if let Some(ref p) = *prom_guard {
                     if let Some(response) = p.try_serve(path) {
-                        return build_hyper_response(&response, metrics);
+                        return build_resp(&response);
                     }
                 }
             }
@@ -1092,11 +1107,11 @@ where
                 )
                 .await
                 {
-                    return build_hyper_response(&response, metrics);
+                    return build_resp(&response);
                 }
             }
             let response = Response::not_found(&format!("Not Found: {method_str} {path}"));
-            return build_hyper_response(&response, metrics);
+            return build_resp(&response);
         }
     };
 
@@ -1147,7 +1162,7 @@ where
                 metrics.inc_errors();
                 let response =
                     Response::error(413, "Payload Too Large: request body exceeds limit");
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
         }
     }
@@ -1177,7 +1192,7 @@ where
                     Err(_) => {
                         metrics.inc_errors();
                         let response = Response::error(408, "Request Timeout: body read timed out");
-                        return build_hyper_response(&response, metrics);
+                        return build_resp(&response);
                     }
                 },
                 None => collect_fut.await,
@@ -1198,7 +1213,7 @@ where
                     metrics.inc_errors();
                     let response =
                         Response::error(413, "Payload Too Large: request body exceeds limit");
-                    return build_hyper_response(&response, metrics);
+                    return build_resp(&response);
                 }
             }
         }
@@ -1215,12 +1230,12 @@ where
         match middleware.execute_before(&mut request) {
             Ok(MiddlewareAction::Continue) => {}
             Ok(MiddlewareAction::Stop(response)) => {
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
             Err(e) => {
                 metrics.inc_errors();
                 let response = Response::error(e.status, &e.message);
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
         }
     }
@@ -1230,12 +1245,12 @@ where
         match middleware.execute_before_async(&mut request).await {
             Ok(MiddlewareAction::Continue) => {}
             Ok(MiddlewareAction::Stop(response)) => {
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
             Err(e) => {
                 metrics.inc_errors();
                 let response = Response::error(e.status, &e.message);
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
         }
     }
@@ -1248,12 +1263,12 @@ where
             match p.before(&mut request) {
                 Ok(MiddlewareAction::Continue) => {}
                 Ok(MiddlewareAction::Stop(response)) => {
-                    return build_hyper_response(&response, metrics);
+                    return build_resp(&response);
                 }
                 Err(e) => {
                     metrics.inc_errors();
                     let response = Response::error(e.status, &e.message);
-                    return build_hyper_response(&response, metrics);
+                    return build_resp(&response);
                 }
             }
         }
@@ -1265,12 +1280,12 @@ where
         match Middleware::before(&**guards, &mut request) {
             Ok(MiddlewareAction::Continue) => {}
             Ok(MiddlewareAction::Stop(response)) => {
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
             Err(e) => {
                 metrics.inc_errors();
                 let response = Response::error(e.status, &e.message);
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
         }
     }
@@ -1295,7 +1310,7 @@ where
             Err(_) => {
                 metrics.inc_errors();
                 let response = Response::error(504, "Gateway Timeout: handler exceeded time limit");
-                return build_hyper_response(&response, metrics);
+                return build_resp(&response);
             }
         },
         None => invoke_fut.await,
@@ -1376,7 +1391,11 @@ where
                 HandlerError::Python(info) => AppError::PythonException(info),
                 HandlerError::Message(message) => AppError::Internal(message),
             };
-            error_handlers.handle(&app_error, &error_request, None)
+            // Already dispatched through the error-handler chain; mark it so
+            // `build_hyper_response` does not dispatch it a second time.
+            let mut handled = error_handlers.handle(&app_error, &error_request, None);
+            handled.set_header(ERROR_HANDLED_HEADER, "1");
+            handled
         }
     };
 
@@ -1388,12 +1407,12 @@ where
         {
             Ok(MiddlewareAction::Continue) => {}
             Ok(MiddlewareAction::Stop(new_response)) => {
-                return build_hyper_response(&new_response, metrics);
+                return build_resp(&new_response);
             }
             Err(e) => {
                 metrics.inc_errors();
                 let error_response = Response::error(e.status, &e.message);
-                return build_hyper_response(&error_response, metrics);
+                return build_resp(&error_response);
             }
         }
     }
@@ -1402,12 +1421,12 @@ where
         match middleware.execute_after(&request, &mut response) {
             Ok(MiddlewareAction::Continue) => {}
             Ok(MiddlewareAction::Stop(new_response)) => {
-                return build_hyper_response(&new_response, metrics);
+                return build_resp(&new_response);
             }
             Err(e) => {
                 metrics.inc_errors();
                 let error_response = Response::error(e.status, &e.message);
-                return build_hyper_response(&error_response, metrics);
+                return build_resp(&error_response);
             }
         }
     }
@@ -1421,13 +1440,41 @@ where
         }
     }
 
-    build_hyper_response(&response, metrics)
+    build_resp(&response)
+}
+
+/// Header marking a response that already went through the error-handler chain;
+/// `build_hyper_response` skips such responses to avoid double dispatch.
+const ERROR_HANDLED_HEADER: &str = "x-cello-error-handled";
+
+/// Map an HTTP status code to the corresponding `AppError` variant so
+/// framework-generated error responses can be dispatched to
+/// `@app.exception_handler(...)` / status / global handlers.
+fn status_to_app_error(status: u16, message: &str) -> AppError {
+    match status {
+        400 => AppError::BadRequest(message.to_string()),
+        401 => AppError::Unauthorized(message.to_string()),
+        403 => AppError::Forbidden(message.to_string()),
+        404 => AppError::NotFound(message.to_string()),
+        409 => AppError::Conflict(message.to_string()),
+        429 => AppError::RateLimited {
+            retry_after: None,
+            message: message.to_string(),
+        },
+        504 => AppError::Timeout(message.to_string()),
+        500 => AppError::Internal(message.to_string()),
+        _ => AppError::Custom {
+            status,
+            message: message.to_string(),
+            type_uri: None,
+        },
+    }
 }
 
 /// Build a Hyper response from our Response type.
 /// PERF: Avoid unnecessary copies - use Bytes::copy_from_slice directly.
 #[inline]
-fn build_hyper_response(
+fn build_hyper_response_inner(
     response: &Response,
     metrics: &Arc<ServerMetrics>,
 ) -> Result<HyperResponse<Full<Bytes>>, Infallible> {
@@ -1436,6 +1483,10 @@ fn build_hyper_response(
     let mut builder = HyperResponse::builder().status(status);
 
     for (key, value) in &response.headers {
+        // Strip the internal "already handled" marker from the wire response.
+        if key == ERROR_HANDLED_HEADER {
+            continue;
+        }
         builder = builder.header(key.as_str(), value.as_str());
     }
 
@@ -1447,6 +1498,36 @@ fn build_hyper_response(
     Ok(builder.body(body).unwrap_or_else(|_| {
         HyperResponse::new(Full::new(Bytes::from_static(b"Internal Server Error")))
     }))
+}
+
+/// Build a Hyper response, routing non-2xx responses through the error-handler
+/// chain when a matching handler is registered.
+///
+/// This is the single hook for every framework-generated error (404, 413, 408,
+/// 504, middleware/guard failures, …): a `status >= 400` response becomes the
+/// corresponding `AppError` and is dispatched via
+/// [`ErrorHandlerRegistry::handle`]. Responses already marked with
+/// [`ERROR_HANDLED_HEADER`] (i.e. produced by the error-handler chain itself)
+/// are returned unchanged to avoid double dispatch.
+#[inline]
+fn build_hyper_response(
+    response: &Response,
+    metrics: &Arc<ServerMetrics>,
+    error_handlers: &Arc<ErrorHandlerRegistry>,
+    request: Option<&Request>,
+) -> Result<HyperResponse<Full<Bytes>>, Infallible> {
+    if response.status >= 400 && !response.headers.contains_key(ERROR_HANDLED_HEADER) {
+        let message = String::from_utf8_lossy(response.body_bytes());
+        let error = status_to_app_error(response.status, &message);
+        if error_handlers.has_handler_for(&error) {
+            let err_request = request
+                .cloned()
+                .unwrap_or_else(|| Request::from_http(String::new(), String::new(), HashMap::new(), HashMap::new(), HashMap::new(), Vec::new()));
+            let handled = error_handlers.handle(&error, &err_request, None);
+            return build_hyper_response_inner(&handled, metrics);
+        }
+    }
+    build_hyper_response_inner(response, metrics)
 }
 
 #[cfg(test)]

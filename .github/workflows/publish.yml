@@ -5,6 +5,13 @@
 name: Publish Cellon to PyPI
 
 on:
+  # A `release` created by another workflow (ci.yml, via GITHUB_TOKEN) does not
+  # trigger the `release` event on this workflow (GitHub suppresses events
+  # caused by GITHUB_TOKEN). Trigger on the tag push itself so publishing
+  # works for the automated release flow.
+  push:
+    tags:
+      - "v*"
   release:
     types: [published]
   workflow_dispatch:
@@ -139,9 +146,11 @@ jobs:
   # ============================================================================
   publish:
     name: Publish Cellon to PyPI
-    needs: [build-sdist, build-linux-x86, build-linux-aarch64, build-macos, build-windows]
+    needs: [build-sdist, build-linux-x86, build-linux-aarch64, build-macos]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    # Runs on a tag push (automated release flow) or a published release
+    # (manual). `workflow_dispatch` is handled by the publish-test job below.
+    if: github.event_name == 'release' || github.event_name == 'push'
     environment:
       name: pypi
       url: https://pypi.org/project/cellon/
@@ -171,7 +180,7 @@ jobs:
   # ============================================================================
   publish-test:
     name: Publish Cellon to Test PyPI
-    needs: [build-sdist, build-linux-x86, build-linux-aarch64, build-macos, build-windows]
+    needs: [build-sdist, build-linux-x86, build-linux-aarch64, build-macos]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_test_pypi == 'true'
     permissions:

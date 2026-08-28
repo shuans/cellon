@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jagadeesh32/cello/actions/workflows/ci.yml"><img src="https://github.com/jagadeesh32/cello/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/shuans/cellon/actions/workflows/ci.yml"><img src="https://github.com/shuans/cellon/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://pypi.org/project/cellon/"><img src="https://img.shields.io/pypi/v/cellon.svg" alt="PyPI"></a>
   <a href="https://pypi.org/project/cellon/"><img src="https://img.shields.io/pypi/pyversions/cellon.svg" alt="Python"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>

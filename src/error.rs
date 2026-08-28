@@ -397,6 +397,24 @@ pub struct ErrorHandlerRegistry {
     debug_mode: RwLock<bool>,
 }
 
+/// Map an `AppError` variant to the Python exception class name users register
+/// with `@app.exception_handler(...)`. Returns `None` for variants that don't
+/// have a dedicated Python exception class.
+fn app_error_to_exception_name(error: &AppError) -> Option<&'static str> {
+    match error {
+        AppError::NotFound(_) => Some("NotFoundError"),
+        AppError::Internal(_) | AppError::Handler(_) => Some("InternalServerError"),
+        AppError::Unauthorized(_) => Some("AuthenticationError"),
+        AppError::Forbidden(_) => Some("AuthorizationError"),
+        AppError::BadRequest(_) => Some("BadRequestError"),
+        AppError::Conflict(_) => Some("ConflictError"),
+        AppError::Validation { .. } => Some("ValidationError"),
+        AppError::RateLimited { .. } => Some("RateLimitError"),
+        AppError::Timeout(_) => Some("TimeoutError"),
+        AppError::PythonException(_) | AppError::Custom { .. } => None,
+    }
+}
+
 impl ErrorHandlerRegistry {
     /// Create a new error handler registry.
     pub fn new() -> Self {
@@ -481,6 +499,24 @@ impl ErrorHandlerRegistry {
             }
         }
 
+        // Try the AppError variant's Python exception class name (e.g. a route
+        // miss produces `AppError::NotFound`, which users hook with
+        // `@app.exception_handler(NotFoundError)`).
+        if let Some(exception_name) = app_error_to_exception_name(error) {
+            if let Some(handler) = self.exception_handlers.read().get(exception_name) {
+                return handler.handle(error, request);
+            }
+        }
+
+        // An unhandled exception from a handler is a server error; route it to
+        // the `InternalServerError` handler when registered so
+        // `@app.exception_handler(InternalServerError)` catches any 500.
+        if let AppError::PythonException(_) = error {
+            if let Some(handler) = self.exception_handlers.read().get("InternalServerError") {
+                return handler.handle(error, request);
+            }
+        }
+
         // Try status code handler
         let status = error.status_code();
         if let Some(handler) = self.status_handlers.read().get(&status) {
@@ -516,6 +552,34 @@ impl ErrorHandlerRegistry {
         self.global.read().is_some()
             || !self.status_handlers.read().is_empty()
             || !self.exception_handlers.read().is_empty()
+    }
+
+    /// Whether any registered handler would match the given error.
+    ///
+    /// Mirrors the dispatch order in [`Self::handle`] (excluding
+    /// blueprint-scoped handlers, which callers pass explicitly).
+    pub fn has_handler_for(&self, error: &AppError) -> bool {
+        if let AppError::PythonException(info) = error {
+            let handlers = self.exception_handlers.read();
+            if handlers.contains_key(&info.exception_type)
+                || info
+                    .exception_type
+                    .rsplit('.')
+                    .next()
+                    .map_or(false, |short| handlers.contains_key(short))
+            {
+                return true;
+            }
+        }
+        if let Some(name) = app_error_to_exception_name(error) {
+            if self.exception_handlers.read().contains_key(name) {
+                return true;
+            }
+        }
+        if self.status_handlers.read().contains_key(&error.status_code()) {
+            return true;
+        }
+        self.global.read().is_some()
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "cellon"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 description = "Ultra-fast Rust-powered Python async web framework"
 license = "MIT"
