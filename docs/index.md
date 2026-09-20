@@ -135,10 +135,10 @@ hide:
 
     ```bash
     # Install from PyPI
-    pip install cello-framework
+    pip install cellon
 
     # Or with optional dependencies
-    pip install cello-framework[grpc,messaging,eventsourcing]
+    pip install cellon[grpc,messaging,eventsourcing]
 
     # Verify installation
     python -c "import cello; print(cello.__version__)"

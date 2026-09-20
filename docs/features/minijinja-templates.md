@@ -13,7 +13,7 @@ Because the engine runs entirely in Rust it adds zero Python overhead on the ren
 No extra packages required — MiniJinja is compiled into the `cello` Rust extension.
 
 ```
-pip install cello-framework       # already includes MiniJinja
+pip install cellon       # already includes MiniJinja
 ```
 
 ---

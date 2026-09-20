@@ -27,7 +27,7 @@ v1.0.1 includes significant performance optimizations in the Rust hot path. Thes
 ### Upgrade
 
 ```bash
-pip install --upgrade cello-framework
+pip install --upgrade cellon
 ```
 
 ```python

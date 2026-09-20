@@ -276,5 +276,5 @@ Proven patterns for building robust, maintainable applications at scale.
 
     - :material-github: **[GitHub Discussions](https://github.com/shuans/cello/discussions)** -- Ask questions, share ideas
     - :material-discord: **[Discord Server](https://discord.gg/cello)** -- Real-time chat with other developers
-    - :material-stack-overflow: **[Stack Overflow](https://stackoverflow.com/questions/tagged/cello-framework)** -- Browse tagged Q&A
+    - :material-stack-overflow: **[Stack Overflow](https://stackoverflow.com/questions/tagged/cellon)** -- Browse tagged Q&A
     - :material-pencil: **[Contributing a Tutorial](../community/contributing.md)** -- Share your knowledge with others

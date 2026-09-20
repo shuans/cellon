@@ -12,7 +12,7 @@ In this tutorial you will build a complete JWT-based authentication system. You 
 ## Prerequisites
 
 - Python 3.12 or later
-- Cello installed (`pip install cello-framework`)
+- Cello installed (`pip install cellon`)
 
 ---
 
@@ -22,7 +22,7 @@ In this tutorial you will build a complete JWT-based authentication system. You 
 mkdir auth-demo && cd auth-demo
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install cello-framework
+pip install cellon
 touch app.py
 ```
 

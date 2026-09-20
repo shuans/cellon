@@ -12,7 +12,7 @@ In this tutorial you will build a complete REST API for managing a **books** res
 ## Prerequisites
 
 - Python 3.12 or later
-- Cello installed (`pip install cello-framework`)
+- Cello installed (`pip install cellon`)
 - A terminal and a text editor
 
 ---
@@ -25,7 +25,7 @@ Create a project directory and install dependencies.
 mkdir bookstore-api && cd bookstore-api
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install cello-framework
+pip install cellon
 ```
 
 Create the main application file.

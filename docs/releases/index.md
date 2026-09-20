@@ -259,16 +259,16 @@ timeline
 
     ```bash
     # Upgrade to the latest stable release
-    pip install --upgrade cello-framework
+    pip install --upgrade cellon
 
     # Pin to a specific version
-    pip install cello-framework==1.3.0
+    pip install cellon==1.3.0
     ```
 
 === "requirements.txt"
 
     ```text
-    cello-framework>=1.3.0,<2.0.0
+    cellon>=1.3.0,<2.0.0
     ```
 
 === "pyproject.toml"
@@ -276,7 +276,7 @@ timeline
     ```toml
     [project]
     dependencies = [
-        "cello-framework>=1.3.0,<2.0.0",
+        "cellon>=1.3.0,<2.0.0",
     ]
     ```
 
