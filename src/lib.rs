@@ -89,8 +89,8 @@ pub struct Cello {
     prometheus: Arc<parking_lot::RwLock<Option<middleware::prometheus::PrometheusMiddleware>>>,
     error_handlers: Arc<ErrorHandlerRegistry>,
     cache_store: Arc<parking_lot::RwLock<Option<Arc<dyn middleware::cache::CacheStore>>>>,
-    startup_handlers: Vec<PyObject>,
-    shutdown_handlers: Vec<PyObject>,
+    startup_handlers: Vec<Py<PyAny>>,
+    shutdown_handlers: Vec<Py<PyAny>>,
     /// Maximum request body size in bytes (0 = unlimited). Enforced by the server
     /// before the body is buffered, preventing unbounded-memory (OOM) requests.
     max_body_size: usize,
@@ -158,49 +158,49 @@ impl Cello {
     }
 
     /// Register a GET route.
-    pub fn get(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn get(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("GET", path, handler)
     }
 
     /// Register a POST route.
-    pub fn post(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn post(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("POST", path, handler)
     }
 
     /// Register a PUT route.
-    pub fn put(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn put(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("PUT", path, handler)
     }
 
     /// Register a DELETE route.
-    pub fn delete(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn delete(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("DELETE", path, handler)
     }
 
     /// Register a PATCH route.
-    pub fn patch(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn patch(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("PATCH", path, handler)
     }
 
     /// Register an OPTIONS route.
-    pub fn options(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn options(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("OPTIONS", path, handler)
     }
 
     /// Register a HEAD route.
-    pub fn head(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn head(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("HEAD", path, handler)
     }
 
     /// Register a WebSocket route.
-    pub fn websocket(&mut self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn websocket(&mut self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.websocket_handlers.register(path, handler);
         Ok(())
     }
 
     /// Register a blueprint.
-    pub fn register_blueprint(&mut self, blueprint: &Blueprint) -> PyResult<()> {
-        let routes = blueprint.get_all_routes();
+    pub fn register_blueprint(&mut self, py: Python<'_>, blueprint: &Blueprint) -> PyResult<()> {
+        let routes = blueprint.get_all_routes(py);
         for (method, path, handler) in routes {
             self.add_route(&method, &path, handler)?;
         }
@@ -238,7 +238,7 @@ impl Cello {
     }
 
     /// Register a handler for a Python exception type.
-    pub fn register_exception_handler(&self, exception_type: String, handler: PyObject) {
+    pub fn register_exception_handler(&self, exception_type: String, handler: Py<PyAny>) {
         self.error_handlers.set_exception_handler(exception_type, handler);
     }
 
@@ -319,14 +319,14 @@ impl Cello {
         Ok(())
     }
 
-    pub fn add_guard(&mut self, guard: PyObject) -> PyResult<()> {
+    pub fn add_guard(&mut self, guard: Py<PyAny>) -> PyResult<()> {
         let python_guard = middleware::guards::PythonGuard::new(guard);
         self.guards.add_guard(python_guard);
         Ok(())
     }
 
     /// Register a singleton dependency.
-    pub fn register_singleton(&mut self, name: String, value: PyObject) {
+    pub fn register_singleton(&mut self, name: String, value: Py<PyAny>) {
         self.dependency_container
             .register_py_singleton(&name, value);
         // Without this the registry's fast-path check stays false and `Depends(...)`
@@ -540,7 +540,7 @@ impl Cello {
     /// - a `bool` — `True` selects the strict preset (CSP, 2y HSTS preload, …),
     /// - a `SecurityHeadersConfig` — explicit header configuration.
     #[pyo3(signature = (config=None))]
-    pub fn enable_security_headers(&mut self, config: Option<&PyAny>) -> PyResult<()> {
+    pub fn enable_security_headers(&mut self, config: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         let mw = match config {
             None => middleware::security::SecurityHeadersMiddleware::new(),
             Some(obj) => {
@@ -616,12 +616,12 @@ impl Cello {
     }
 
     /// Register a startup handler.
-    pub fn on_startup(&mut self, handler: PyObject) {
+    pub fn on_startup(&mut self, handler: Py<PyAny>) {
         self.startup_handlers.push(handler);
     }
 
     /// Register a shutdown handler.
-    pub fn on_shutdown(&mut self, handler: PyObject) {
+    pub fn on_shutdown(&mut self, handler: Py<PyAny>) {
         self.shutdown_handlers.push(handler);
     }
 
@@ -759,14 +759,18 @@ impl Cello {
     /// The native Postgres pool, or `None` if `enable_database()` was not called.
     /// Use inside `on_event("startup")` to create tables, etc.
     #[getter]
-    pub fn database(&self, py: Python<'_>) -> Option<PyObject> {
-        self.database_client.as_ref().map(|d| d.to_object(py))
+    pub fn database(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.database_client
+            .as_ref()
+            .map(|d| d.clone_ref(py).into_any())
     }
 
     /// The native Redis client, or `None` if `enable_redis()` was not called.
     #[getter]
-    pub fn redis(&self, py: Python<'_>) -> Option<PyObject> {
-        self.redis_client.as_ref().map(|r| r.to_object(py))
+    pub fn redis(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.redis_client
+            .as_ref()
+            .map(|r| r.clone_ref(py).into_any())
     }
 
     // ========================================================================
@@ -1011,10 +1015,17 @@ def openapi_handler(request):
 "#
         );
 
-        // Execute Python code and register handlers
-        let docs_handler = py.eval(&format!("{docs_code}\ndocs_handler"), None, None)?;
-        let redoc_handler = py.eval(&format!("{redoc_code}\nredoc_handler"), None, None)?;
-        let openapi_handler = py.eval(&format!("{openapi_code}\nopenapi_handler"), None, None)?;
+        // Execute Python code and register handlers. PyO3 0.23+ takes the source
+        // as a NUL-terminated `CStr`.
+        let docs_src = std::ffi::CString::new(format!("{docs_code}\ndocs_handler"))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let redoc_src = std::ffi::CString::new(format!("{redoc_code}\nredoc_handler"))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let openapi_src = std::ffi::CString::new(format!("{openapi_code}\nopenapi_handler"))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let docs_handler = py.eval(&docs_src, None, None)?;
+        let redoc_handler = py.eval(&redoc_src, None, None)?;
+        let openapi_handler = py.eval(&openapi_src, None, None)?;
 
         self.add_route("GET", "/docs", docs_handler.into())?;
         self.add_route("GET", "/redoc", redoc_handler.into())?;
@@ -1049,8 +1060,11 @@ def openapi_handler(request):
         let guards = self.guards.clone();
         let prometheus = self.prometheus.clone();
         let error_handlers = self.error_handlers.clone();
-        let startup_handlers = self.startup_handlers.clone();
-        let shutdown_handlers = self.shutdown_handlers.clone();
+        // `Py<T>` is not `Clone` in pyo3 0.29, so clone the handler refs under the GIL.
+        let startup_handlers: Vec<Py<PyAny>> =
+            self.startup_handlers.iter().map(|h| h.clone_ref(py)).collect();
+        let shutdown_handlers: Vec<Py<PyAny>> =
+            self.shutdown_handlers.iter().map(|h| h.clone_ref(py)).collect();
 
         // Limits/timeouts are plain Copy values captured for the server config.
         let max_body_size = self.max_body_size;
@@ -1069,13 +1083,13 @@ def openapi_handler(request):
 
         // Release the GIL and run a native Tokio current-thread runtime.
         //
-        // pyo3_asyncio::tokio::run was previously used here but it drives Tokio I/O
+        // pyo3_async_runtimes::tokio::run was previously used here but it drives Tokio I/O
         // through Python's asyncio selector loop, which breaks socket binding in
         // environments where the two event loops don't integrate (Python 3.12+ / pyo3 0.20).
         // Since the server's hot path is pure Rust I/O, we release the GIL with
-        // allow_threads and block on a self-contained Tokio runtime. Python handlers
-        // re-acquire the GIL individually via Python::with_gil when they need it.
-        py.allow_threads(|| {
+        // detach and block on a self-contained Tokio runtime. Python handlers
+        // re-acquire the GIL individually via Python::attach when they need it.
+        py.detach(|| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 // Bounds the blocking pool that offloaded sync handlers, async
@@ -1132,8 +1146,8 @@ def openapi_handler(request):
                     );
 
                     // Startup hooks
-                    for handler in &startup_handlers {
-                        if let Err(e) = run_lifecycle_handler_async(handler.clone()).await {
+                    for handler in startup_handlers {
+                        if let Err(e) = run_lifecycle_handler_async(handler).await {
                             eprintln!("Error in startup handler: {e}");
                         }
                     }
@@ -1141,8 +1155,8 @@ def openapi_handler(request):
                     let _ = server.run().await;
 
                     // Shutdown hooks
-                    for handler in &shutdown_handlers {
-                        match run_lifecycle_handler_async(handler.clone()).await {
+                    for handler in shutdown_handlers {
+                        match run_lifecycle_handler_async(handler).await {
                             Err(e) if !e.to_string().contains("KeyboardInterrupt") => {
                                 eprintln!("Error in shutdown handler: {e}");
                             }
@@ -1155,7 +1169,7 @@ def openapi_handler(request):
     }
 
     /// Internal route registration.
-    fn add_route(&mut self, method: &str, path: &str, handler: PyObject) -> PyResult<()> {
+    fn add_route(&mut self, method: &str, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         let handler_id = self.handlers.register(handler);
         self.router
             .add_route(method, path, handler_id)
@@ -2551,27 +2565,27 @@ impl PySagaConfig {
 /// Handles both sync `def` and `async def` hooks. For async hooks the coroutine
 /// is driven by Tokio via pyo3-asyncio so the GIL is released during I/O waits,
 /// consistent with how request handlers are executed.
-async fn run_lifecycle_handler_async(handler: PyObject) -> Result<(), String> {
+async fn run_lifecycle_handler_async(handler: Py<PyAny>) -> Result<(), String> {
     // Phase 1 (GIL): call the handler; detect whether it returned a coroutine.
-    let (result, is_coro) = Python::with_gil(|py| -> PyResult<(PyObject, bool)> {
+    let (result, is_coro) = Python::attach(|py| -> PyResult<(Py<PyAny>, bool)> {
         let ret = handler.call0(py)?;
         let inspect = py.import("inspect")?;
         let is_coro = inspect
-            .call_method1("iscoroutine", (ret.as_ref(py),))?
-            .is_true()?;
+            .call_method1("iscoroutine", (ret.bind(py),))?
+            .is_truthy()?;
         Ok((ret, is_coro))
     })
     .map_err(|e| e.to_string())?;
 
     // Phase 2 (GIL released): drive the coroutine on the persistent asyncio loop.
-    // (The previous `pyo3_asyncio::tokio::into_future` path failed at runtime because
-    // pyo3_asyncio is never initialised, so async startup/shutdown hooks silently did
+    // (The previous `pyo3_async_runtimes::tokio::into_future` path failed at runtime because
+    // the runtime bridge is never initialised, so async startup/shutdown hooks silently did
     // not run.)
     if is_coro {
         let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
         tokio::task::spawn_blocking(move || {
-            let r = Python::with_gil(|py| {
-                async_loop::run_coroutine_blocking(py, result.as_ref(py))
+            let r = Python::attach(|py| {
+                async_loop::run_coroutine_blocking(py, result.bind(py))
                     .map(|_| ())
                     .map_err(|e| e.to_string())
             });
@@ -2588,7 +2602,7 @@ async fn run_lifecycle_handler_async(handler: PyObject) -> Result<(), String> {
 
 /// Python module definition.
 #[pymodule]
-fn _cello(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn _cello(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core classes
     m.add_class::<Cello>()?;
     m.add_class::<request::Request>()?;

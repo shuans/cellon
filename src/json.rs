@@ -3,8 +3,9 @@
 //! Uses simd-json for fast JSON parsing and serialization,
 //! with serde_json as fallback.
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyList, PyLong, PyString, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyList, PyInt, PyString, PyTuple};
 
 /// Parse JSON string to serde_json::Value.
 /// Uses SIMD acceleration on x86_64 and aarch64 (NEON), falls back to serde_json
@@ -57,7 +58,7 @@ pub fn serialize_json_pretty(value: &serde_json::Value) -> Result<String, String
 
 /// Convert a Python object to serde_json::Value.
 #[inline]
-pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, String> {
+pub fn python_to_json<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Result<serde_json::Value, String> {
     // Handle None
     if obj.is_none() {
         return Ok(serde_json::Value::Null);
@@ -70,14 +71,14 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
     // bool/int/float probes first.
 
     // Handle bool (must come before int check since bool is subclass of int in Python)
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(serde_json::Value::Bool(b.is_true()));
     }
 
     // Handle int. Try i64 first, then u64 for large unsigned values (e.g. 64-bit IDs
     // and values in (i64::MAX, u64::MAX]) so they are not silently downgraded to f64
     // and corrupted. Integers beyond u64 still fall through to the float path.
-    if let Ok(long) = obj.downcast::<PyLong>() {
+    if let Ok(long) = obj.cast::<PyInt>() {
         if let Ok(i) = long.extract::<i64>() {
             return Ok(serde_json::Value::Number(i.into()));
         }
@@ -90,55 +91,59 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
     }
 
     // Handle float
-    if let Ok(float) = obj.downcast::<PyFloat>() {
+    if let Ok(float) = obj.cast::<PyFloat>() {
         if let Ok(f) = float.extract::<f64>() {
             return Ok(serde_json::json!(f));
         }
     }
 
     // Handle string
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         if let Ok(s) = s.to_str() {
             return Ok(serde_json::Value::String(s.to_owned()));
         }
     }
 
     // Handle list
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         // PERF: Pre-allocate vec with known capacity
         let mut items = Vec::with_capacity(list.len());
         for item in list.iter() {
-            items.push(python_to_json(py, item)?);
+            items.push(python_to_json(py, &item)?);
         }
         return Ok(serde_json::Value::Array(items));
     }
 
     // Handle dict
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         // PERF: Pre-allocate map with known capacity
         let mut map = serde_json::Map::with_capacity(dict.len());
         for (key, value) in dict.iter() {
             let key_str = key
                 .extract::<String>()
                 .map_err(|_| "Dict keys must be strings".to_string())?;
-            let value_json = python_to_json(py, value)?;
+            let value_json = python_to_json(py, &value)?;
             map.insert(key_str, value_json);
         }
         return Ok(serde_json::Value::Object(map));
     }
 
     // Handle tuple
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
         // PERF: Pre-allocate vec with known capacity
         let mut items = Vec::with_capacity(tuple.len());
         for item in tuple.iter() {
-            items.push(python_to_json(py, item)?);
+            items.push(python_to_json(py, &item)?);
         }
         return Ok(serde_json::Value::Array(items));
     }
 
     // Handle Response object - check by class name
-    let class_name = obj.get_type().name().unwrap_or("");
+    let class_name = obj
+        .get_type()
+        .name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     if class_name == "Response" {
         let mut response_obj = serde_json::Map::new();
         response_obj.insert(
@@ -153,7 +158,7 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
         }
 
         if let Ok(headers) = obj.getattr("headers") {
-            if let Ok(dict) = headers.downcast::<PyDict>() {
+            if let Ok(dict) = headers.cast::<PyDict>() {
                 let mut headers_map = serde_json::Map::new();
                 for (key, value) in dict.iter() {
                     if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
@@ -201,16 +206,19 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
 /// Returns Ok(Some(bytes)) for normal dicts/lists/primitives,
 /// Returns Ok(None) for Response objects (caller must fall back to python_to_json).
 #[inline]
-pub fn python_to_json_bytes_direct(py: Python<'_>, obj: &PyAny) -> Result<Option<Vec<u8>>, String> {
+pub fn python_to_json_bytes_direct<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+) -> Result<Option<Vec<u8>>, String> {
     // PERF: Type-check (a cheap isinstance) instead of probing with
     // `extract::<T>()`, which allocates and clears a Python exception on every
     // failed attempt. dict/list first (most handlers return a dict), then scalars.
-    let is_container = obj.downcast::<PyDict>().is_ok() || obj.downcast::<PyList>().is_ok();
+    let is_container = obj.cast::<PyDict>().is_ok() || obj.cast::<PyList>().is_ok();
     let is_scalar = obj.is_none()
-        || obj.downcast::<PyBool>().is_ok()
-        || obj.downcast::<PyLong>().is_ok()
-        || obj.downcast::<PyFloat>().is_ok()
-        || obj.downcast::<PyString>().is_ok();
+        || obj.cast::<PyBool>().is_ok()
+        || obj.cast::<PyInt>().is_ok()
+        || obj.cast::<PyFloat>().is_ok()
+        || obj.cast::<PyString>().is_ok();
     if is_container || is_scalar {
         let mut buf = Vec::with_capacity(128);
         write_json_value(py, obj, &mut buf)?;
@@ -222,7 +230,7 @@ pub fn python_to_json_bytes_direct(py: Python<'_>, obj: &PyAny) -> Result<Option
 }
 
 /// Write a Python object as JSON directly to a byte buffer.
-fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<(), String> {
+fn write_json_value<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>, buf: &mut Vec<u8>) -> Result<(), String> {
     use std::io::Write;
 
     // Handle None
@@ -236,7 +244,7 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
     // Python exception on every failed probe.
 
     // Handle bool (must come before int check since bool is subclass of int in Python)
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         buf.extend_from_slice(if b.is_true() { b"true" } else { b"false" });
         return Ok(());
     }
@@ -244,7 +252,7 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
     // Handle int. Try i64, then u64 for large unsigned values, so 64-bit IDs and
     // values in (i64::MAX, u64::MAX] are written exactly instead of being coerced to
     // an imprecise float. Integers beyond u64 still fall through to the float path.
-    if let Ok(long) = obj.downcast::<PyLong>() {
+    if let Ok(long) = obj.cast::<PyInt>() {
         if let Ok(i) = long.extract::<i64>() {
             write!(buf, "{i}").map_err(|e| e.to_string())?;
             return Ok(());
@@ -260,7 +268,7 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
     }
 
     // Handle float
-    if let Ok(float) = obj.downcast::<PyFloat>() {
+    if let Ok(float) = obj.cast::<PyFloat>() {
         if let Ok(f) = float.extract::<f64>() {
             write_json_float(f, buf);
             return Ok(());
@@ -268,7 +276,7 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
     }
 
     // Handle string - need to JSON-escape
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         if let Ok(s) = s.to_str() {
             write_json_string(s, buf);
             return Ok(());
@@ -276,20 +284,20 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
     }
 
     // Handle list
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         buf.push(b'[');
         for (i, item) in list.iter().enumerate() {
             if i > 0 {
                 buf.push(b',');
             }
-            write_json_value(py, item, buf)?;
+            write_json_value(py, &item, buf)?;
         }
         buf.push(b']');
         return Ok(());
     }
 
     // Handle dict
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         buf.push(b'{');
         let mut first = true;
         for (key, value) in dict.iter() {
@@ -302,20 +310,20 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
             first = false;
             write_json_string(&key_str, buf);
             buf.push(b':');
-            write_json_value(py, value, buf)?;
+            write_json_value(py, &value, buf)?;
         }
         buf.push(b'}');
         return Ok(());
     }
 
     // Handle tuple
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
         buf.push(b'[');
         for (i, item) in tuple.iter().enumerate() {
             if i > 0 {
                 buf.push(b',');
             }
-            write_json_value(py, item, buf)?;
+            write_json_value(py, &item, buf)?;
         }
         buf.push(b']');
         return Ok(());
@@ -397,33 +405,33 @@ fn write_json_string(s: &str, buf: &mut Vec<u8>) {
 
 /// Convert a serde_json::Value to a Python object.
 #[inline]
-pub fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+pub fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.into_py(py)),
+        serde_json::Value::Bool(b) => (*b).into_py_any(py),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i.into_py(py))
+                i.into_py_any(py)
             } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py(py))
+                f.into_py_any(py)
             } else {
                 Ok(py.None())
             }
         }
-        serde_json::Value::String(s) => Ok(s.into_py(py)),
+        serde_json::Value::String(s) => s.as_str().into_py_any(py),
         serde_json::Value::Array(arr) => {
             let list = PyList::empty(py);
             for item in arr {
                 list.append(json_to_python(py, item)?)?;
             }
-            Ok(list.into_py(py))
+            list.into_py_any(py)
         }
         serde_json::Value::Object(obj) => {
             let dict = PyDict::new(py);
             for (key, val) in obj {
                 dict.set_item(key, json_to_python(py, val)?)?;
             }
-            Ok(dict.into_py(py))
+            dict.into_py_any(py)
         }
     }
 }

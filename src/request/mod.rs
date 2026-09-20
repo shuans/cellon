@@ -61,11 +61,11 @@ pub struct Request {
 
     /// Python-level Redis client injected when app.enable_redis() is configured.
     /// Wrapped in Arc so Clone stays GIL-free (atomic refcount only).
-    pub redis_client: Option<Arc<PyObject>>,
+    pub redis_client: Option<Arc<Py<PyAny>>>,
 
     /// Python-level Database pool injected when app.enable_database() is configured.
     /// Wrapped in Arc so Clone stays GIL-free (atomic refcount only).
-    pub database_client: Option<Arc<PyObject>>,
+    pub database_client: Option<Arc<Py<PyAny>>>,
 }
 
 /// Internal cache for lazy parsing results.
@@ -155,7 +155,7 @@ impl Request {
     }
 
     /// Parse the request body as JSON using SIMD acceleration (cached).
-    pub fn json(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let mut cache = self.lazy_cache.json_parsed.write();
 
         let value = if let Some(ref result) = *cache {
@@ -378,7 +378,7 @@ impl Request {
     }
 
     /// Get a context value by key.
-    pub fn get_context(&self, py: Python<'_>, key: &str) -> PyResult<PyObject> {
+    pub fn get_context(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
         match self.context.get(key) {
             Some(value) => json_to_python(py, value),
             None => Ok(py.None()),
@@ -386,8 +386,8 @@ impl Request {
     }
 
     /// Set a context value by key.
-    pub fn set_context(&mut self, py: Python<'_>, key: String, value: PyObject) -> PyResult<()> {
-        let json_value = python_to_json(py, value.as_ref(py))
+    pub fn set_context(&mut self, py: Python<'_>, key: String, value: Py<PyAny>) -> PyResult<()> {
+        let json_value = python_to_json(py, value.bind(py))
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
         self.context.insert(key, json_value);
         Ok(())
@@ -405,7 +405,7 @@ impl Request {
 
     /// Access the Redis client configured via app.enable_redis().
     #[getter]
-    pub fn redis(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn redis(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.redis_client
             .as_ref()
             .map(|arc| arc.clone_ref(py))
@@ -418,13 +418,13 @@ impl Request {
     }
 
     /// Inject the Redis client into this request (called by the Python App wrapper).
-    pub fn _inject_redis(&mut self, client: PyObject) {
+    pub fn _inject_redis(&mut self, client: Py<PyAny>) {
         self.redis_client = Some(Arc::new(client));
     }
 
     /// Access the Database pool configured via app.enable_database().
     #[getter]
-    pub fn database(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn database(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.database_client
             .as_ref()
             .map(|arc| arc.clone_ref(py))
@@ -438,12 +438,12 @@ impl Request {
 
     /// Alias for `database` (asyncpg users reach for `request.db`).
     #[getter]
-    pub fn db(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn db(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.database(py)
     }
 
     /// Inject the Database pool into this request (called by the Python App wrapper).
-    pub fn _inject_database(&mut self, client: PyObject) {
+    pub fn _inject_database(&mut self, client: Py<PyAny>) {
         self.database_client = Some(Arc::new(client));
     }
 }

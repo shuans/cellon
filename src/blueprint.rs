@@ -10,11 +10,13 @@ use std::sync::Arc;
 use crate::middleware::MiddlewareChain;
 
 /// Route definition within a blueprint.
-#[derive(Clone)]
+///
+/// `Py<T>` no longer implements `Clone` (pyo3 0.29), so this is not `Clone`;
+/// handlers are cloned with `clone_ref(py)` when routes are collected.
 pub struct RouteDefinition {
     pub method: String,
     pub path: String,
-    pub handler: PyObject,
+    pub handler: Py<PyAny>,
 }
 
 /// Blueprint for grouping routes with a common prefix.
@@ -61,27 +63,27 @@ impl Blueprint {
     }
 
     /// Register a GET route.
-    pub fn get(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn get(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("GET", path, handler)
     }
 
     /// Register a POST route.
-    pub fn post(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn post(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("POST", path, handler)
     }
 
     /// Register a PUT route.
-    pub fn put(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn put(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("PUT", path, handler)
     }
 
     /// Register a DELETE route.
-    pub fn delete(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn delete(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("DELETE", path, handler)
     }
 
     /// Register a PATCH route.
-    pub fn patch(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn patch(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("PATCH", path, handler)
     }
 
@@ -92,20 +94,24 @@ impl Blueprint {
     }
 
     /// Get all routes including from nested blueprints.
-    pub fn get_all_routes(&self) -> Vec<(String, String, PyObject)> {
+    pub fn get_all_routes(&self, py: Python<'_>) -> Vec<(String, String, Py<PyAny>)> {
         let mut all_routes = Vec::new();
 
         // Add routes from this blueprint
         let routes = self.routes.read();
         for route in routes.iter() {
             let full_path = format!("{}{}", self.prefix, route.path);
-            all_routes.push((route.method.clone(), full_path, route.handler.clone()));
+            all_routes.push((
+                route.method.clone(),
+                full_path,
+                route.handler.clone_ref(py),
+            ));
         }
 
         // Add routes from nested blueprints
         let children = self.children.read();
         for child in children.iter() {
-            let child_routes = child.get_all_routes();
+            let child_routes = child.get_all_routes(py);
             for (method, path, handler) in child_routes {
                 let full_path = format!("{}{}", self.prefix, path);
                 all_routes.push((method, full_path, handler));
@@ -116,7 +122,7 @@ impl Blueprint {
     }
 
     /// Internal route registration.
-    fn add_route(&self, method: &str, path: &str, handler: PyObject) -> PyResult<()> {
+    fn add_route(&self, method: &str, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         let normalized_path = if path.starts_with('/') || path.is_empty() {
             path.to_string()
         } else {

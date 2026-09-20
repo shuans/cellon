@@ -1,11 +1,12 @@
 //! Rust-native async HTTP client exposed to Python via PyO3.
 //!
 //! Backed by reqwest + Tokio. The GIL is never held during network I/O —
-//! coroutines are driven by `pyo3_asyncio::tokio::future_into_py`, so HTTP
+//! coroutines are driven by `pyo3_async_runtimes::tokio::future_into_py`, so HTTP
 //! wait time is pure Rust with no Python scheduler overhead.
 
 use std::collections::HashMap;
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -24,7 +25,7 @@ pub struct PyHttpResponse {
 impl PyHttpResponse {
     /// Raw response body as bytes.
     #[getter]
-    fn content<'py>(&self, py: Python<'py>) -> &'py PyBytes {
+    fn content<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(py, &self.body)
     }
 
@@ -41,10 +42,10 @@ impl PyHttpResponse {
     }
 
     /// Parse response body as JSON, returning a Python object.
-    fn json(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let json_mod = py.import("json")?;
         let raw = PyBytes::new(py, &self.body);
-        Ok(json_mod.call_method1("loads", (raw,))?.into_py(py))
+        json_mod.call_method1("loads", (raw,))?.into_py_any(py)
     }
 
     fn __repr__(&self) -> String {
@@ -93,9 +94,9 @@ impl PyAsyncClient {
         py: Python<'py>,
         url: String,
         headers: Option<HashMap<String, String>>,
-    ) -> PyResult<&'py PyAny> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let client = self.client.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             dispatch(client.get(&url), headers, None, None).await
         })
     }
@@ -106,13 +107,13 @@ impl PyAsyncClient {
         &self,
         py: Python<'py>,
         url: String,
-        json: Option<PyObject>,
+        json: Option<Py<PyAny>>,
         content: Option<Vec<u8>>,
         headers: Option<HashMap<String, String>>,
-    ) -> PyResult<&'py PyAny> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let json_bytes = to_json_bytes(py, json)?;
         let client = self.client.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             dispatch(client.post(&url), headers, json_bytes, content).await
         })
     }
@@ -123,13 +124,13 @@ impl PyAsyncClient {
         &self,
         py: Python<'py>,
         url: String,
-        json: Option<PyObject>,
+        json: Option<Py<PyAny>>,
         content: Option<Vec<u8>>,
         headers: Option<HashMap<String, String>>,
-    ) -> PyResult<&'py PyAny> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let json_bytes = to_json_bytes(py, json)?;
         let client = self.client.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             dispatch(client.put(&url), headers, json_bytes, content).await
         })
     }
@@ -140,13 +141,13 @@ impl PyAsyncClient {
         &self,
         py: Python<'py>,
         url: String,
-        json: Option<PyObject>,
+        json: Option<Py<PyAny>>,
         content: Option<Vec<u8>>,
         headers: Option<HashMap<String, String>>,
-    ) -> PyResult<&'py PyAny> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let json_bytes = to_json_bytes(py, json)?;
         let client = self.client.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             dispatch(client.patch(&url), headers, json_bytes, content).await
         })
     }
@@ -158,27 +159,27 @@ impl PyAsyncClient {
         py: Python<'py>,
         url: String,
         headers: Option<HashMap<String, String>>,
-    ) -> PyResult<&'py PyAny> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let client = self.client.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             dispatch(client.delete(&url), headers, None, None).await
         })
     }
 
     /// Async context manager support — `async with AsyncClient() as client`.
-    fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<&'py PyAny> {
-        let py_self = slf.into_py(py);
-        pyo3_asyncio::tokio::future_into_py(py, async move { Ok(py_self) })
+    fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let py_self = slf.into_py_any(py)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(py_self) })
     }
 
     fn __aexit__<'py>(
         &self,
         py: Python<'py>,
-        _exc_type: PyObject,
-        _exc_val: PyObject,
-        _exc_tb: PyObject,
-    ) -> PyResult<&'py PyAny> {
-        pyo3_asyncio::tokio::future_into_py(py, async { Ok(Python::with_gil(|py| py.None())) })
+        _exc_type: Py<PyAny>,
+        _exc_val: Py<PyAny>,
+        _exc_tb: Py<PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async { Ok(Python::attach(|py| py.None())) })
     }
 }
 
@@ -186,13 +187,13 @@ impl PyAsyncClient {
 
 /// Serialize a Python object to JSON bytes while the GIL is held.
 /// Returns `None` when `json` is `None` (no body).
-fn to_json_bytes(py: Python<'_>, json: Option<PyObject>) -> PyResult<Option<Vec<u8>>> {
+fn to_json_bytes(py: Python<'_>, json: Option<Py<PyAny>>) -> PyResult<Option<Vec<u8>>> {
     match json {
         None => Ok(None),
         Some(obj) => {
             let s = py
                 .import("json")?
-                .call_method1("dumps", (obj.as_ref(py),))?
+                .call_method1("dumps", (obj.bind(py),))?
                 .extract::<String>()?;
             Ok(Some(s.into_bytes()))
         }
@@ -208,7 +209,7 @@ async fn dispatch(
     headers: Option<HashMap<String, String>>,
     json_bytes: Option<Vec<u8>>,
     content: Option<Vec<u8>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     if let Some(hdrs) = headers {
         for (k, v) in hdrs {
             builder = builder.header(k.as_str(), v.as_str());
@@ -240,5 +241,5 @@ async fn dispatch(
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
         .to_vec();
 
-    Python::with_gil(|py| Ok(PyHttpResponse { status, body, hdrs }.into_py(py)))
+    Python::attach(|py| PyHttpResponse { status, body, hdrs }.into_py_any(py))
 }

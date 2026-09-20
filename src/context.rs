@@ -126,15 +126,15 @@ impl PyContext {
     }
 
     /// Get a value by key.
-    pub fn get(&self, key: &str) -> Option<PyObject> {
+    pub fn get(&self, key: &str) -> Option<Py<PyAny>> {
         let ctx = self.inner.read();
         ctx.get_named(key).map(|v| {
-            Python::with_gil(|py| crate::json::json_to_python(py, v).unwrap_or_else(|_| py.None()))
+            Python::attach(|py| crate::json::json_to_python(py, v).unwrap_or_else(|_| py.None()))
         })
     }
 
     /// Set a value by key.
-    pub fn set(&self, py: Python<'_>, key: &str, value: &PyAny) -> PyResult<()> {
+    pub fn set<'py>(&self, py: Python<'py>, key: &str, value: &Bound<'py, PyAny>) -> PyResult<()> {
         let json_value = crate::json::python_to_json(py, value)
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
         self.inner.write().set_named(key, json_value);
@@ -142,10 +142,10 @@ impl PyContext {
     }
 
     /// Remove a value by key.
-    pub fn remove(&self, key: &str) -> Option<PyObject> {
+    pub fn remove(&self, key: &str) -> Option<Py<PyAny>> {
         let mut ctx = self.inner.write();
         ctx.remove_named(key).map(|v| {
-            Python::with_gil(|py| crate::json::json_to_python(py, &v).unwrap_or_else(|_| py.None()))
+            Python::attach(|py| crate::json::json_to_python(py, &v).unwrap_or_else(|_| py.None()))
         })
     }
 
@@ -164,12 +164,12 @@ impl PyContext {
         self.inner.write().clear();
     }
 
-    fn __getitem__(&self, key: &str) -> PyResult<PyObject> {
+    fn __getitem__(&self, key: &str) -> PyResult<Py<PyAny>> {
         self.get(key)
             .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }
 
-    fn __setitem__(&self, py: Python<'_>, key: &str, value: &PyAny) -> PyResult<()> {
+    fn __setitem__<'py>(&self, py: Python<'py>, key: &str, value: &Bound<'py, PyAny>) -> PyResult<()> {
         self.set(py, key, value)
     }
 

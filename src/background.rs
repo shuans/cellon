@@ -26,13 +26,13 @@ pub trait BackgroundTask: Send + Sync + 'static {
 
 /// A Python background task.
 pub struct PythonBackgroundTask {
-    handler: PyObject,
-    args: Vec<PyObject>,
+    handler: Py<PyAny>,
+    args: Vec<Py<PyAny>>,
     name: String,
 }
 
 impl PythonBackgroundTask {
-    pub fn new(handler: PyObject, args: Vec<PyObject>) -> Self {
+    pub fn new(handler: Py<PyAny>, args: Vec<Py<PyAny>>) -> Self {
         Self {
             handler,
             args,
@@ -48,8 +48,14 @@ impl PythonBackgroundTask {
 
 impl BackgroundTask for PythonBackgroundTask {
     fn execute(&self) {
-        Python::with_gil(|py| {
-            let args_tuple = pyo3::types::PyTuple::new(py, &self.args);
+        Python::attach(|py| {
+            let args_tuple = match pyo3::types::PyTuple::new(py, &self.args) {
+                Ok(args) => args,
+                Err(e) => {
+                    eprintln!("Background task '{}' failed: {}", self.name, e);
+                    return;
+                }
+            };
             if let Err(e) = self.handler.call1(py, args_tuple) {
                 eprintln!("Background task '{}' failed: {}", self.name, e);
             }
@@ -125,7 +131,7 @@ impl BackgroundTasks {
     }
 
     /// Add a Python function as a background task.
-    pub fn add_python(&self, handler: PyObject, args: Vec<PyObject>) {
+    pub fn add_python(&self, handler: Py<PyAny>, args: Vec<Py<PyAny>>) {
         self.add(PythonBackgroundTask::new(handler, args));
     }
 
@@ -248,7 +254,7 @@ impl PyBackgroundTasks {
     }
 
     /// Add a task function with arguments.
-    pub fn add_task(&self, func: PyObject, args: Vec<PyObject>) {
+    pub fn add_task(&self, func: Py<PyAny>, args: Vec<Py<PyAny>>) {
         self.inner.add_python(func, args);
     }
 

@@ -103,7 +103,7 @@ impl Response {
     /// Create a JSON response.
     #[staticmethod]
     #[pyo3(signature = (data, status=None))]
-    pub fn json(py: Python<'_>, data: &PyAny, status: Option<u16>) -> PyResult<Self> {
+    pub fn json<'py>(py: Python<'py>, data: &Bound<'py, PyAny>, status: Option<u16>) -> PyResult<Self> {
         let json_value =
             python_to_json(py, data).map_err(pyo3::exceptions::PyValueError::new_err)?;
         let body = Bytes::from(
@@ -322,7 +322,11 @@ impl Response {
     /// Create a "201 Created" response.
     #[staticmethod]
     #[pyo3(signature = (data=None, location=None))]
-    pub fn created(py: Python<'_>, data: Option<&PyAny>, location: Option<&str>) -> PyResult<Self> {
+    pub fn created<'py>(
+        py: Python<'py>,
+        data: Option<&Bound<'py, PyAny>>,
+        location: Option<&str>,
+    ) -> PyResult<Self> {
         let mut resp = if let Some(d) = data {
             Self::json(py, d, Some(201))?
         } else {
@@ -340,9 +344,9 @@ impl Response {
     /// Create an XML response.
     #[staticmethod]
     #[pyo3(signature = (data, status=None, root_name=None))]
-    pub fn xml(
-        py: Python<'_>,
-        data: &PyAny,
+    pub fn xml<'py>(
+        py: Python<'py>,
+        data: &Bound<'py, PyAny>,
         status: Option<u16>,
         root_name: Option<&str>,
     ) -> PyResult<Self> {

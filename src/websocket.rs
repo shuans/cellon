@@ -97,10 +97,10 @@ impl WebSocketMessage {
     #[getter]
     fn payload(&self, py: Python<'_>) -> Py<PyAny> {
         if let Some(text) = &self.text {
-            let value: Py<PyAny> = text.clone().into_py(py);
+            let value: Py<PyAny> = pyo3::types::PyString::new(py, text).into_any().unbind();
             value
         } else if let Some(bytes) = &self.data {
-            let value: Py<PyAny> = pyo3::types::PyBytes::new(py, bytes).into_py(py);
+            let value: Py<PyAny> = pyo3::types::PyBytes::new(py, bytes).into_any().unbind();
             value
         } else {
             py.None()
@@ -182,7 +182,7 @@ impl WebSocket {
     }
 
     /// Send a JSON-serializable value as a text message.
-    pub fn send_json<'py>(&self, py: Python<'py>, obj: &'py PyAny) -> PyResult<()> {
+    pub fn send_json<'py>(&self, py: Python<'py>, obj: &Bound<'py, PyAny>) -> PyResult<()> {
         let json_str: String = py.import("json")?.call_method1("dumps", (obj,))?.extract()?;
         self.send_text(&json_str)
     }
@@ -233,17 +233,17 @@ impl WebSocket {
     // ── Async API (driven on the persistent asyncio loop) ────────────────────
 
     /// Await the next message. Returns `None` when the connection closes.
-    pub fn receive<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    pub fn receive<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let backend = self.backend.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             Ok(receive_from_backend(backend).await)
         })
     }
 
     /// Await the next text message.
-    pub fn receive_text<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    pub fn receive_text<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let backend = self.backend.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             match receive_from_backend(backend).await {
                 Some(msg) if msg.msg_type == "text" => Ok(msg.text),
                 _ => Ok(None),
@@ -252,14 +252,14 @@ impl WebSocket {
     }
 
     /// Await the next binary message (returned as `bytes`).
-    pub fn receive_binary<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    pub fn receive_binary<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let backend = self.backend.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             match receive_from_backend(backend).await {
                 Some(msg) if msg.msg_type == "binary" => {
                     let bytes = msg.data.unwrap_or_default();
-                    let data: Py<PyAny> = Python::with_gil(|py| {
-                        pyo3::types::PyBytes::new(py, &bytes).into_py(py)
+                    let data: Py<PyAny> = Python::attach(|py| {
+                        pyo3::types::PyBytes::new(py, &bytes).into_any().unbind()
                     });
                     Ok(Some(data))
                 }
@@ -269,15 +269,15 @@ impl WebSocket {
     }
 
     /// Await the next text message and parse it as JSON.
-    pub fn receive_json<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    pub fn receive_json<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let backend = self.backend.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let msg = receive_from_backend(backend).await;
             match msg {
                 Some(msg) if msg.msg_type == "text" => match msg.text {
-                    Some(text) => Python::with_gil(|py| {
+                    Some(text) => Python::attach(|py| {
                         let value = py.import("json")?.call_method1("loads", (text,))?;
-                        Ok(Some(value.into_py(py)))
+                        Ok(Some(value.unbind()))
                     }),
                     None => Ok(None),
                 },
@@ -343,7 +343,7 @@ async fn receive_from_backend(backend: WsBackend) -> Option<WebSocketMessage> {
 
 /// WebSocket handler registry.
 pub struct WebSocketRegistry {
-    handlers: Arc<RwLock<HashMap<String, PyObject>>>,
+    handlers: Arc<RwLock<HashMap<String, Py<PyAny>>>>,
 }
 
 impl WebSocketRegistry {
@@ -353,12 +353,12 @@ impl WebSocketRegistry {
         }
     }
 
-    pub fn register(&self, path: &str, handler: PyObject) {
+    pub fn register(&self, path: &str, handler: Py<PyAny>) {
         self.handlers.write().insert(path.to_string(), handler);
     }
 
-    pub fn get(&self, path: &str) -> Option<PyObject> {
-        self.handlers.read().get(path).cloned()
+    pub fn get(&self, path: &str, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.handlers.read().get(path).map(|h| h.clone_ref(py))
     }
 
     pub fn contains(&self, path: &str) -> bool {
@@ -439,7 +439,7 @@ pub fn websocket_key(headers: &hyper::HeaderMap) -> Option<String> {
 /// socket messages into the inbound channel, then invokes the registered Python
 /// handler with the channel-backed `WebSocket` handle. Async handlers are
 /// driven on the persistent asyncio loop. Returns once the handler completes.
-pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, peer: String) {
+pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: Py<PyAny>, peer: String) {
     use futures_util::{SinkExt, StreamExt};
     use hyper_util::rt::TokioIo;
     use tokio_tungstenite::tungstenite::protocol::Role;
@@ -529,25 +529,25 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, 
     );
 
     // Invoke the Python handler; drive coroutines on the persistent loop.
-    let call = Python::with_gil(|py| -> PyResult<PyObject> {
+    let call = Python::attach(|py| -> PyResult<Py<PyAny>> {
         let obj = handler.call1(py, (ws,))?;
-        Ok(obj.into_py(py))
+        Ok(obj)
     });
 
     match call {
         Ok(obj) => {
-            let is_coro = Python::with_gil(|py| {
+            let is_coro = Python::attach(|py| {
                 py.import("inspect")
                     .and_then(|inspect| {
-                        inspect.call_method1("iscoroutine", (obj.as_ref(py),))
+                        inspect.call_method1("iscoroutine", (obj.bind(py),))
                     })
-                    .and_then(|r| r.is_true())
+                    .and_then(|r| r.is_truthy())
                     .unwrap_or(false)
             });
             if is_coro {
                 let _ = tokio::task::spawn_blocking(move || {
-                    let _ = Python::with_gil(|py| {
-                        crate::async_loop::run_coroutine_blocking(py, obj.as_ref(py))
+                    let _ = Python::attach(|py| {
+                        crate::async_loop::run_coroutine_blocking(py, obj.bind(py))
                     });
                 })
                 .await;

@@ -207,7 +207,7 @@ impl PyTemplateEngine {
     pub fn render(
         &self,
         name: &str,
-        context: HashMap<String, PyObject>,
+        context: HashMap<String, Py<PyAny>>,
         py: Python<'_>,
     ) -> PyResult<String> {
         let mut ctx = TemplateContext::new();
@@ -236,7 +236,7 @@ impl PyTemplateEngine {
     pub fn render_string(
         &self,
         template: &str,
-        context: HashMap<String, PyObject>,
+        context: HashMap<String, Py<PyAny>>,
         py: Python<'_>,
     ) -> PyResult<String> {
         let mut ctx = TemplateContext::new();

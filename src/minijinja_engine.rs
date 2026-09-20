@@ -122,7 +122,12 @@ impl PyMiniJinjaEngine {
     ///         "items": ["a", "b", "c"],
     ///     })
     ///     ```
-    pub fn render(&self, name: &str, context: &PyDict, py: Python<'_>) -> PyResult<String> {
+    pub fn render<'py>(
+        &self,
+        name: &str,
+        context: &Bound<'py, PyDict>,
+        py: Python<'py>,
+    ) -> PyResult<String> {
         let ctx = pydict_to_json(context, py)?;
         let inner = self.inner.read();
         let tmpl = inner.env.get_template(name).map_err(|e| {
@@ -161,11 +166,11 @@ impl PyMiniJinjaEngine {
     ///     )
     ///     # → "Hello, Bob! You have 5 messages."
     ///     ```
-    pub fn render_string(
+    pub fn render_string<'py>(
         &self,
         source: &str,
-        context: &PyDict,
-        py: Python<'_>,
+        context: &Bound<'py, PyDict>,
+        py: Python<'py>,
     ) -> PyResult<String> {
         let ctx = pydict_to_json(context, py)?;
         let inner = self.inner.read();
@@ -189,8 +194,8 @@ impl PyMiniJinjaEngine {
     ///     engine.add_global("app_name", "My App")
     ///     engine.add_global("version", "1.1.0")
     ///     ```
-    pub fn add_global(&self, name: &str, value: PyObject, py: Python<'_>) -> PyResult<()> {
-        let json_val = pyobj_to_json(value.as_ref(py))?;
+    pub fn add_global(&self, name: &str, value: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
+        let json_val = pyobj_to_json(value.bind(py))?;
         let mj_val = minijinja::Value::from_serialize(&json_val);
         self.inner.write().env.add_global(name.to_string(), mj_val);
         Ok(())
@@ -209,11 +214,11 @@ impl PyMiniJinjaEngine {
     ///         "year": 2026,
     ///     })
     ///     ```
-    pub fn add_globals(&self, globals: &PyDict, _py: Python<'_>) -> PyResult<()> {
+    pub fn add_globals<'py>(&self, globals: &Bound<'py, PyDict>, _py: Python<'py>) -> PyResult<()> {
         let mut inner = self.inner.write();
         for (k, v) in globals.iter() {
             let key: String = k.extract()?;
-            let json_val = pyobj_to_json(v)?;
+            let json_val = pyobj_to_json(&v)?;
             let mj_val = minijinja::Value::from_serialize(&json_val);
             inner.env.add_global(key, mj_val);
         }
@@ -250,17 +255,17 @@ impl PyMiniJinjaEngine {
 // ============================================================================
 
 /// Convert a Python `dict` to `serde_json::Value::Object`.
-pub fn pydict_to_json(dict: &PyDict, _py: Python<'_>) -> PyResult<serde_json::Value> {
+pub fn pydict_to_json(dict: &Bound<'_, PyDict>, _py: Python<'_>) -> PyResult<serde_json::Value> {
     let mut map = serde_json::Map::new();
     for (k, v) in dict.iter() {
         let key: String = k.extract()?;
-        map.insert(key, pyobj_to_json(v)?);
+        map.insert(key, pyobj_to_json(&v)?);
     }
     Ok(serde_json::Value::Object(map))
 }
 
 /// Recursively convert any Python object to `serde_json::Value`.
-pub fn pyobj_to_json(val: &PyAny) -> PyResult<serde_json::Value> {
+pub fn pyobj_to_json(val: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     // None
     if val.is_none() {
         return Ok(serde_json::Value::Null);
@@ -287,29 +292,30 @@ pub fn pyobj_to_json(val: &PyAny) -> PyResult<serde_json::Value> {
     }
     // list / tuple → JSON array
     if val.is_instance_of::<PyList>() {
-        let list = val.downcast::<PyList>()?;
+        let list = val.cast::<PyList>()?;
         let arr: Vec<serde_json::Value> =
-            list.iter().map(pyobj_to_json).collect::<PyResult<_>>()?;
+            list.iter().map(|v| pyobj_to_json(&v)).collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
     if val.is_instance_of::<PyTuple>() {
-        let tup = val.downcast::<PyTuple>()?;
-        let arr: Vec<serde_json::Value> = tup.iter().map(pyobj_to_json).collect::<PyResult<_>>()?;
+        let tup = val.cast::<PyTuple>()?;
+        let arr: Vec<serde_json::Value> =
+            tup.iter().map(|v| pyobj_to_json(&v)).collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
     // dict → JSON object
     if val.is_instance_of::<PyDict>() {
-        let dict = val.downcast::<PyDict>()?;
+        let dict = val.cast::<PyDict>()?;
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract().unwrap_or_else(|_| k.str().unwrap().to_string());
-            map.insert(key, pyobj_to_json(v)?);
+            map.insert(key, pyobj_to_json(&v)?);
         }
         return Ok(serde_json::Value::Object(map));
     }
     // Dataclass / object with __dict__ → recurse into dict
     if let Ok(obj_dict) = val.getattr("__dict__") {
-        if let Ok(d) = obj_dict.downcast::<PyDict>() {
+        if let Ok(d) = obj_dict.cast::<PyDict>() {
             let mut map = serde_json::Map::new();
             for (k, v) in d.iter() {
                 let key: String = k.extract().unwrap_or_else(|_| k.str().unwrap().to_string());
@@ -317,7 +323,7 @@ pub fn pyobj_to_json(val: &PyAny) -> PyResult<serde_json::Value> {
                 if key.starts_with('_') {
                     continue;
                 }
-                map.insert(key, pyobj_to_json(v)?);
+                map.insert(key, pyobj_to_json(&v)?);
             }
             return Ok(serde_json::Value::Object(map));
         }

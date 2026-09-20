@@ -264,7 +264,7 @@ impl FieldError {
 }
 
 /// Python exception information with traceback.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PythonExceptionInfo {
     /// Exception type name (e.g., "ValueError").
     pub exception_type: String,
@@ -277,7 +277,24 @@ pub struct PythonExceptionInfo {
     /// Line number (if available).
     pub line: Option<u32>,
     /// The original Python exception instance, preserved for custom handlers.
-    pub exception: Option<PyObject>,
+    pub exception: Option<Py<PyAny>>,
+}
+
+impl Clone for PythonExceptionInfo {
+    fn clone(&self) -> Self {
+        Self {
+            exception_type: self.exception_type.clone(),
+            message: self.message.clone(),
+            traceback: self.traceback.clone(),
+            file: self.file.clone(),
+            line: self.line,
+            // `Py<T>` is not `Clone` in pyo3 0.29, so the ref is cloned under the GIL.
+            exception: self
+                .exception
+                .as_ref()
+                .map(|e| Python::attach(|py| e.clone_ref(py))),
+        }
+    }
 }
 
 impl PythonExceptionInfo {
@@ -299,7 +316,7 @@ impl PythonExceptionInfo {
             traceback,
             file: None,
             line: None,
-            exception: Some(err.value(py).into_py(py)),
+            exception: Some(err.value(py).clone().into_any().unbind()),
         }
     }
 }
@@ -315,16 +332,16 @@ pub type ErrorHandlerFn = Arc<dyn Fn(&AppError, &Request) -> Response + Send + S
 
 /// Python error handler wrapper.
 pub struct PyErrorHandler {
-    handler: PyObject,
+    handler: Py<PyAny>,
 }
 
 impl PyErrorHandler {
-    pub fn new(handler: PyObject) -> Self {
+    pub fn new(handler: Py<PyAny>) -> Self {
         Self { handler }
     }
 
     pub fn handle(&self, error: &AppError, request: &Request) -> Response {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Create error info dict for Python
             let error_dict = pyo3::types::PyDict::new(py);
             let _ = error_dict.set_item("message", error.to_string());
@@ -343,8 +360,8 @@ impl PyErrorHandler {
                     .exception
                     .as_ref()
                     .map(|value| value.clone_ref(py))
-                    .unwrap_or_else(|| error_dict.into_py(py)),
-                _ => error_dict.into_py(py),
+                    .unwrap_or_else(|| error_dict.clone().into_any().unbind()),
+                _ => error_dict.clone().into_any().unbind(),
             };
 
             match self.handler.call1(py, (request.clone(), exception)) {
@@ -365,7 +382,7 @@ impl PyErrorHandler {
                         return resp;
                     }
                     // Accept any JSON-serializable value as a response body.
-                    if let Ok(json_value) = python_to_json(py, result.as_ref(py)) {
+                    if let Ok(json_value) = python_to_json(py, result.bind(py)) {
                         return Response::from_json_value(json_value, error.status_code());
                     }
                     // Fallback to default error response
@@ -438,19 +455,19 @@ impl ErrorHandlerRegistry {
     }
 
     /// Register a global error handler.
-    pub fn set_global_handler(&self, handler: PyObject) {
+    pub fn set_global_handler(&self, handler: Py<PyAny>) {
         *self.global.write() = Some(Arc::new(PyErrorHandler::new(handler)));
     }
 
     /// Register a handler for a specific status code.
-    pub fn set_status_handler(&self, status: u16, handler: PyObject) {
+    pub fn set_status_handler(&self, status: u16, handler: Py<PyAny>) {
         self.status_handlers
             .write()
             .insert(status, Arc::new(PyErrorHandler::new(handler)));
     }
 
     /// Register a handler for a specific exception type.
-    pub fn set_exception_handler(&self, exception_type: impl Into<String>, handler: PyObject) {
+    pub fn set_exception_handler(&self, exception_type: impl Into<String>, handler: Py<PyAny>) {
         self.exception_handlers.write().insert(
             exception_type.into(),
             Arc::new(PyErrorHandler::new(handler)),
@@ -622,17 +639,17 @@ impl PyErrorHandlerRegistry {
     }
 
     /// Register a global error handler.
-    pub fn error_handler(&self, handler: PyObject) {
+    pub fn error_handler(&self, handler: Py<PyAny>) {
         self.inner.set_global_handler(handler);
     }
 
     /// Register a status code handler.
-    pub fn status_handler(&self, status: u16, handler: PyObject) {
+    pub fn status_handler(&self, status: u16, handler: Py<PyAny>) {
         self.inner.set_status_handler(status, handler);
     }
 
     /// Register an exception type handler.
-    pub fn exception_handler(&self, exception_type: String, handler: PyObject) {
+    pub fn exception_handler(&self, exception_type: String, handler: Py<PyAny>) {
         self.inner.set_exception_handler(exception_type, handler);
     }
 }

@@ -121,17 +121,17 @@ impl Signal {
 
 /// Python hook wrapper for async execution.
 pub struct PyHook {
-    handler: PyObject,
+    handler: Py<PyAny>,
     is_async: bool,
 }
 
 impl PyHook {
-    pub fn new(handler: PyObject) -> Self {
-        let is_async = Python::with_gil(|py| {
+    pub fn new(handler: Py<PyAny>) -> Self {
+        let is_async = Python::attach(|py| {
             let inspect = py.import("inspect").ok();
             inspect
                 .and_then(|i| i.call_method1("iscoroutinefunction", (&handler,)).ok())
-                .and_then(|r| r.is_true().ok())
+                .and_then(|r| r.is_truthy().ok())
                 .unwrap_or(false)
         });
         Self { handler, is_async }
@@ -143,7 +143,7 @@ impl PyHook {
 
     /// Execute the hook (sync or async).
     pub fn execute(&self) -> Result<(), String> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self.handler.call0(py).map_err(|e| e.to_string())?;
             if self.is_async {
                 Self::run_coroutine(py, &result)?;
@@ -158,7 +158,7 @@ impl PyHook {
     /// shutdown triggered from an async context). In that case we schedule the coroutine
     /// onto the running loop from this (Tokio/non-loop) thread via `run_coroutine_threadsafe`
     /// and block until it completes.
-    fn run_coroutine(py: Python<'_>, coro: &PyObject) -> Result<(), String> {
+    fn run_coroutine(py: Python<'_>, coro: &Py<PyAny>) -> Result<(), String> {
         let asyncio = py.import("asyncio").map_err(|e| e.to_string())?;
         // get_running_loop() raises RuntimeError when no loop is running; .ok() → None.
         if let Ok(running_loop) = asyncio.call_method0("get_running_loop") {
@@ -176,7 +176,7 @@ impl PyHook {
 
     /// Execute with request argument.
     pub fn execute_with_request(&self, request: &mut Request) -> HookResult {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self
                 .handler
                 .call1(py, (request.clone(),))
@@ -189,16 +189,16 @@ impl PyHook {
                     .map_err(|e| e.to_string())?;
 
                 // Check return value
-                return Self::parse_hook_result(py, awaited);
+                return Self::parse_hook_result(py, &awaited);
             }
 
-            Self::parse_hook_result(py, result.as_ref(py))
+            Self::parse_hook_result(py, result.bind(py))
         })
     }
 
     /// Execute with request and response arguments.
     pub fn execute_with_response(&self, request: &Request, response: &mut Response) -> HookResult {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self
                 .handler
                 .call1(py, (request.clone(), response.clone()))
@@ -210,15 +210,15 @@ impl PyHook {
                     .call_method1("run", (result,))
                     .map_err(|e| e.to_string())?;
 
-                return Self::parse_hook_result(py, awaited);
+                return Self::parse_hook_result(py, &awaited);
             }
 
-            Self::parse_hook_result(py, result.as_ref(py))
+            Self::parse_hook_result(py, result.bind(py))
         })
     }
 
     /// Parse hook result from Python return value.
-    fn parse_hook_result(py: Python<'_>, result: &PyAny) -> HookResult {
+    fn parse_hook_result<'py>(py: Python<'py>, result: &Bound<'py, PyAny>) -> HookResult {
         // None means continue
         if result.is_none() {
             return Ok(HookAction::Continue);
@@ -246,7 +246,7 @@ impl PyHook {
         }
 
         // Dict means JSON response
-        if let Ok(_dict) = result.downcast::<pyo3::types::PyDict>() {
+        if let Ok(_dict) = result.cast::<pyo3::types::PyDict>() {
             let json_value = crate::json::python_to_json(py, result)?;
             let body = serde_json::to_vec(&json_value).unwrap_or_default();
             let mut response = Response::new(200);
@@ -292,47 +292,47 @@ impl LifecycleHooks {
     }
 
     /// Register a startup hook.
-    pub fn add_startup_hook(&self, handler: PyObject) {
+    pub fn add_startup_hook(&self, handler: Py<PyAny>) {
         self.on_startup.write().push(Arc::new(PyHook::new(handler)));
     }
 
     /// Register a shutdown hook.
-    pub fn add_shutdown_hook(&self, handler: PyObject) {
+    pub fn add_shutdown_hook(&self, handler: Py<PyAny>) {
         self.on_shutdown
             .write()
             .push(Arc::new(PyHook::new(handler)));
     }
 
     /// Register a before request hook.
-    pub fn add_before_request_hook(&self, handler: PyObject) {
+    pub fn add_before_request_hook(&self, handler: Py<PyAny>) {
         self.before_request
             .write()
             .push(Arc::new(PyHook::new(handler)));
     }
 
     /// Register an after request hook.
-    pub fn add_after_request_hook(&self, handler: PyObject) {
+    pub fn add_after_request_hook(&self, handler: Py<PyAny>) {
         self.after_request
             .write()
             .push(Arc::new(PyHook::new(handler)));
     }
 
     /// Register an exception hook.
-    pub fn add_exception_hook(&self, handler: PyObject) {
+    pub fn add_exception_hook(&self, handler: Py<PyAny>) {
         self.on_exception
             .write()
             .push(Arc::new(PyHook::new(handler)));
     }
 
     /// Register a worker start hook.
-    pub fn add_worker_start_hook(&self, handler: PyObject) {
+    pub fn add_worker_start_hook(&self, handler: Py<PyAny>) {
         self.on_worker_start
             .write()
             .push(Arc::new(PyHook::new(handler)));
     }
 
     /// Register a worker shutdown hook.
-    pub fn add_worker_shutdown_hook(&self, handler: PyObject) {
+    pub fn add_worker_shutdown_hook(&self, handler: Py<PyAny>) {
         self.on_worker_shutdown
             .write()
             .push(Arc::new(PyHook::new(handler)));
@@ -405,7 +405,7 @@ impl LifecycleHooks {
             return;
         }
         for hook in hooks.iter() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let error_dict = pyo3::types::PyDict::new(py);
                 let _ = error_dict.set_item("message", error.to_string());
                 let _ = error_dict.set_item("status", error.status_code());
@@ -418,7 +418,7 @@ impl LifecycleHooks {
     /// Execute worker start hooks.
     pub fn execute_worker_start(&self, worker_id: usize) -> Result<(), String> {
         for hook in self.on_worker_start.read().iter() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 hook.handler
                     .call1(py, (worker_id,))
                     .map_err(|e| e.to_string())
@@ -430,7 +430,7 @@ impl LifecycleHooks {
     /// Execute worker shutdown hooks.
     pub fn execute_worker_shutdown(&self, worker_id: usize) -> Result<(), String> {
         for hook in self.on_worker_shutdown.read().iter() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let _ = hook.handler.call1(py, (worker_id,));
             });
         }
@@ -472,7 +472,7 @@ impl SignalHandlers {
     }
 
     /// Register a signal handler.
-    pub fn register(&self, signal: Signal, handler: PyObject) {
+    pub fn register(&self, signal: Signal, handler: Py<PyAny>) {
         self.handlers
             .write()
             .entry(signal)
@@ -537,14 +537,14 @@ impl RouteHooks {
     }
 
     /// Add a before hook.
-    pub fn add_before(&mut self, handler: PyObject) {
+    pub fn add_before(&mut self, handler: Py<PyAny>) {
         self.before
             .get_or_insert_with(Vec::new)
             .push(Arc::new(PyHook::new(handler)));
     }
 
     /// Add an after hook.
-    pub fn add_after(&mut self, handler: PyObject) {
+    pub fn add_after(&mut self, handler: Py<PyAny>) {
         self.after
             .get_or_insert_with(Vec::new)
             .push(Arc::new(PyHook::new(handler)));
@@ -569,34 +569,34 @@ impl PyLifecycleHooks {
     }
 
     /// Register a startup hook.
-    pub fn on_startup(&self, handler: PyObject) {
+    pub fn on_startup(&self, handler: Py<PyAny>) {
         self.inner.add_startup_hook(handler);
     }
 
     /// Register a shutdown hook.
-    pub fn on_shutdown(&self, handler: PyObject) {
+    pub fn on_shutdown(&self, handler: Py<PyAny>) {
         self.inner.add_shutdown_hook(handler);
     }
 
     /// Register a before request hook.
-    pub fn before_request(&self, handler: PyObject) {
+    pub fn before_request(&self, handler: Py<PyAny>) {
         self.inner.add_before_request_hook(handler);
     }
 
     /// Register an after request hook.
-    pub fn after_request(&self, handler: PyObject) {
+    pub fn after_request(&self, handler: Py<PyAny>) {
         self.inner.add_after_request_hook(handler);
     }
 
     /// Register an exception hook.
-    pub fn on_exception(&self, handler: PyObject) {
+    pub fn on_exception(&self, handler: Py<PyAny>) {
         self.inner.add_exception_hook(handler);
     }
 
     /// Register a signal handler.
     /// On Windows, only SIGTERM and SIGINT are supported.
     /// Registering SIGHUP, SIGUSR1, or SIGUSR2 on Windows will emit a warning and be ignored.
-    pub fn on_signal(&self, signal: &str, handler: PyObject) -> PyResult<()> {
+    pub fn on_signal(&self, signal: &str, handler: Py<PyAny>) -> PyResult<()> {
         let sig = Signal::from_str(signal).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("Unknown signal: {signal}"))
         })?;
@@ -612,12 +612,12 @@ impl PyLifecycleHooks {
     }
 
     /// Register a worker start hook.
-    pub fn on_worker_start(&self, handler: PyObject) {
+    pub fn on_worker_start(&self, handler: Py<PyAny>) {
         self.inner.add_worker_start_hook(handler);
     }
 
     /// Register a worker shutdown hook.
-    pub fn on_worker_shutdown(&self, handler: PyObject) {
+    pub fn on_worker_shutdown(&self, handler: Py<PyAny>) {
         self.inner.add_worker_shutdown_hook(handler);
     }
 }
