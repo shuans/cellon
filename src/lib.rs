@@ -540,7 +540,7 @@ impl Cello {
     /// - a `bool` — `True` selects the strict preset (CSP, 2y HSTS preload, …),
     /// - a `SecurityHeadersConfig` — explicit header configuration.
     #[pyo3(signature = (config=None))]
-    pub fn enable_security_headers(&mut self, config: Option<&PyAny>) -> PyResult<()> {
+    pub fn enable_security_headers(&mut self, config: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         let mw = match config {
             None => middleware::security::SecurityHeadersMiddleware::new(),
             Some(obj) => {
@@ -760,13 +760,17 @@ impl Cello {
     /// Use inside `on_event("startup")` to create tables, etc.
     #[getter]
     pub fn database(&self, py: Python<'_>) -> Option<PyObject> {
-        self.database_client.as_ref().map(|d| d.to_object(py))
+        self.database_client
+            .as_ref()
+            .map(|d| d.clone_ref(py).into_any())
     }
 
     /// The native Redis client, or `None` if `enable_redis()` was not called.
     #[getter]
     pub fn redis(&self, py: Python<'_>) -> Option<PyObject> {
-        self.redis_client.as_ref().map(|r| r.to_object(py))
+        self.redis_client
+            .as_ref()
+            .map(|r| r.clone_ref(py).into_any())
     }
 
     // ========================================================================
@@ -1069,12 +1073,12 @@ def openapi_handler(request):
 
         // Release the GIL and run a native Tokio current-thread runtime.
         //
-        // pyo3_asyncio::tokio::run was previously used here but it drives Tokio I/O
+        // pyo3_async_runtimes::tokio::run was previously used here but it drives Tokio I/O
         // through Python's asyncio selector loop, which breaks socket binding in
         // environments where the two event loops don't integrate (Python 3.12+ / pyo3 0.20).
         // Since the server's hot path is pure Rust I/O, we release the GIL with
         // allow_threads and block on a self-contained Tokio runtime. Python handlers
-        // re-acquire the GIL individually via Python::with_gil when they need it.
+        // re-acquire the GIL individually via Python::attach when they need it.
         py.allow_threads(|| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2553,25 +2557,25 @@ impl PySagaConfig {
 /// consistent with how request handlers are executed.
 async fn run_lifecycle_handler_async(handler: PyObject) -> Result<(), String> {
     // Phase 1 (GIL): call the handler; detect whether it returned a coroutine.
-    let (result, is_coro) = Python::with_gil(|py| -> PyResult<(PyObject, bool)> {
+    let (result, is_coro) = Python::attach(|py| -> PyResult<(PyObject, bool)> {
         let ret = handler.call0(py)?;
         let inspect = py.import("inspect")?;
         let is_coro = inspect
-            .call_method1("iscoroutine", (ret.as_ref(py),))?
+            .call_method1("iscoroutine", (ret.bind(py),))?
             .is_true()?;
         Ok((ret, is_coro))
     })
     .map_err(|e| e.to_string())?;
 
     // Phase 2 (GIL released): drive the coroutine on the persistent asyncio loop.
-    // (The previous `pyo3_asyncio::tokio::into_future` path failed at runtime because
-    // pyo3_asyncio is never initialised, so async startup/shutdown hooks silently did
+    // (The previous `pyo3_async_runtimes::tokio::into_future` path failed at runtime because
+    // the runtime bridge is never initialised, so async startup/shutdown hooks silently did
     // not run.)
     if is_coro {
         let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
         tokio::task::spawn_blocking(move || {
-            let r = Python::with_gil(|py| {
-                async_loop::run_coroutine_blocking(py, result.as_ref(py))
+            let r = Python::attach(|py| {
+                async_loop::run_coroutine_blocking(py, result.bind(py))
                     .map(|_| ())
                     .map_err(|e| e.to_string())
             });
@@ -2588,7 +2592,7 @@ async fn run_lifecycle_handler_async(handler: PyObject) -> Result<(), String> {
 
 /// Python module definition.
 #[pymodule]
-fn _cello(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn _cello(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core classes
     m.add_class::<Cello>()?;
     m.add_class::<request::Request>()?;

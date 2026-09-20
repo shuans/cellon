@@ -36,7 +36,7 @@ pub enum SqlParam {
 ///
 /// Order matters: `bool` is a subclass of `int` in Python, so it must be checked
 /// before the integer branch.
-pub fn py_to_sqlparam(obj: &PyAny) -> PyResult<SqlParam> {
+pub fn py_to_sqlparam(obj: &Bound<'_, PyAny>) -> PyResult<SqlParam> {
     if obj.is_none() {
         return Ok(SqlParam::Null);
     }
@@ -68,7 +68,7 @@ pub fn py_to_sqlparam(obj: &PyAny) -> PyResult<SqlParam> {
 }
 
 /// Convert a Python sequence of parameters into `SqlParam`s.
-pub fn py_params_to_sqlparams(params: &[&PyAny]) -> PyResult<Vec<SqlParam>> {
+pub fn py_params_to_sqlparams(params: &[Bound<'_, PyAny>]) -> PyResult<Vec<SqlParam>> {
     params.iter().map(|p| py_to_sqlparam(p)).collect()
 }
 
@@ -115,7 +115,7 @@ pub fn row_to_pydict(py: Python<'_>, row: &Row) -> PyResult<PyObject> {
         let value = pg_value_to_py(py, row, idx, col.type_())?;
         dict.set_item(col.name(), value)?;
     }
-    Ok(dict.into_py(py))
+    dict.into_py_any(py)
 }
 
 /// Decode one column of a row into a Python object based on its Postgres type.
@@ -132,18 +132,18 @@ fn pg_value_to_py(py: Python<'_>, row: &Row, idx: usize, ty: &Type) -> PyResult<
     }
 
     let obj = match *ty {
-        Type::BOOL => get!(bool).into_py(py),
-        Type::INT2 => get!(i16).into_py(py),
-        Type::INT4 => get!(i32).into_py(py),
-        Type::INT8 => get!(i64).into_py(py),
-        Type::OID => get!(u32).into_py(py),
-        Type::FLOAT4 => get!(f32).into_py(py),
-        Type::FLOAT8 => get!(f64).into_py(py),
+        Type::BOOL => get!(bool).into_py_any(py),
+        Type::INT2 => get!(i16).into_py_any(py),
+        Type::INT4 => get!(i32).into_py_any(py),
+        Type::INT8 => get!(i64).into_py_any(py),
+        Type::OID => get!(u32).into_py_any(py),
+        Type::FLOAT4 => get!(f32).into_py_any(py),
+        Type::FLOAT8 => get!(f64).into_py_any(py),
         Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::UNKNOWN | Type::CHAR => {
-            get!(String).into_py(py)
+            get!(String).into_py_any(py)
         }
         Type::BYTEA => match get!(Vec<u8>) {
-            Some(b) => PyBytes::new(py, &b).into_py(py),
+            Some(b) => PyBytes::new(py, &b).into_py_any(py),
             None => py.None(),
         },
         Type::JSON | Type::JSONB => match get!(serde_json::Value) {
@@ -151,30 +151,30 @@ fn pg_value_to_py(py: Python<'_>, row: &Row, idx: usize, ty: &Type) -> PyResult<
             None => py.None(),
         },
         Type::UUID => match get!(uuid::Uuid) {
-            Some(u) => u.to_string().into_py(py),
+            Some(u) => u.to_string().into_py_any(py),
             None => py.None(),
         },
         Type::TIMESTAMP => match get!(chrono::NaiveDateTime) {
-            Some(t) => t.format("%Y-%m-%dT%H:%M:%S%.6f").to_string().into_py(py),
+            Some(t) => t.format("%Y-%m-%dT%H:%M:%S%.6f").to_string().into_py_any(py),
             None => py.None(),
         },
         Type::TIMESTAMPTZ => match get!(chrono::DateTime<chrono::Utc>) {
-            Some(t) => t.to_rfc3339().into_py(py),
+            Some(t) => t.to_rfc3339().into_py_any(py),
             None => py.None(),
         },
         Type::DATE => match get!(chrono::NaiveDate) {
-            Some(d) => d.to_string().into_py(py),
+            Some(d) => d.to_string().into_py_any(py),
             None => py.None(),
         },
         Type::TIME => match get!(chrono::NaiveTime) {
-            Some(t) => t.to_string().into_py(py),
+            Some(t) => t.to_string().into_py_any(py),
             None => py.None(),
         },
         // Best-effort fallback: try text, then a diagnostic placeholder.
         _ => match row.try_get::<_, Option<String>>(idx) {
-            Ok(Some(s)) => s.into_py(py),
+            Ok(Some(s)) => s.into_py_any(py),
             Ok(None) => py.None(),
-            Err(_) => format!("<unsupported column type: {ty}>").into_py(py),
+            Err(_) => format!("<unsupported column type: {ty}>").into_py_any(py),
         },
     };
     Ok(obj)
@@ -185,30 +185,30 @@ pub fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
     use serde_json::Value;
     let obj = match value {
         Value::Null => py.None(),
-        Value::Bool(b) => b.into_py(py),
+        Value::Bool(b) => b.into_py_any(py),
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                i.into_py(py)
+                i.into_py_any(py)
             } else if let Some(u) = n.as_u64() {
-                u.into_py(py)
+                u.into_py_any(py)
             } else {
-                n.as_f64().unwrap_or(0.0).into_py(py)
+                n.as_f64().unwrap_or(0.0).into_py_any(py)
             }
         }
-        Value::String(s) => s.into_py(py),
+        Value::String(s) => s.into_py_any(py),
         Value::Array(arr) => {
             let list = pyo3::types::PyList::empty(py);
             for item in arr {
                 list.append(json_to_py(py, item)?)?;
             }
-            list.into_py(py)
+            list.into_py_any(py)
         }
         Value::Object(map) => {
             let dict = pyo3::types::PyDict::new(py);
             for (k, v) in map {
                 dict.set_item(k, json_to_py(py, v)?)?;
             }
-            dict.into_py(py)
+            dict.into_py_any(py)
         }
     };
     Ok(obj)

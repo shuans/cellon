@@ -454,7 +454,7 @@ impl PythonGuard {
 
 impl Guard for PythonGuard {
     fn check(&self, request: &Request) -> GuardResult {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Call the Python guard with the request
             let result = self
                 .handler

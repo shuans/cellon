@@ -387,7 +387,7 @@ impl Request {
 
     /// Set a context value by key.
     pub fn set_context(&mut self, py: Python<'_>, key: String, value: PyObject) -> PyResult<()> {
-        let json_value = python_to_json(py, value.as_ref(py))
+        let json_value = python_to_json(py, value.bind(py))
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
         self.context.insert(key, json_value);
         Ok(())

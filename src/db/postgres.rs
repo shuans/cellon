@@ -1,7 +1,7 @@
 //! Native async Postgres connection pool exposed to Python.
 //!
 //! Backed by `deadpool-postgres` + `tokio-postgres`. Query methods return Python
-//! awaitables via `pyo3_asyncio::tokio::future_into_py`, so the GIL is released
+//! awaitables via `pyo3_async_runtimes::tokio::future_into_py`, so the GIL is released
 //! for the entire duration of the database I/O (verified to resolve on Cello's
 //! persistent asyncio loop — see `src/async_loop.rs` and `src/http_client.rs`).
 //!
@@ -72,10 +72,10 @@ impl PyDatabase {
 impl PyDatabase {
     /// Execute a statement, returning the number of rows affected.
     #[pyo3(signature = (sql, *params))]
-    fn execute<'py>(&self, py: Python<'py>, sql: String, params: &PyTuple) -> PyResult<&'py PyAny> {
+    fn execute<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let pool = self.pool.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let client = pool.get().await.map_err(rt_err)?;
             let refs = as_sql_refs(&sql_params);
             let n = client.execute(&sql, &refs).await.map_err(rt_err)?;
@@ -85,19 +85,19 @@ impl PyDatabase {
 
     /// Run a query and return every row as a list of dicts.
     #[pyo3(signature = (sql, *params))]
-    fn fetch<'py>(&self, py: Python<'py>, sql: String, params: &PyTuple) -> PyResult<&'py PyAny> {
+    fn fetch<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let pool = self.pool.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let client = pool.get().await.map_err(rt_err)?;
             let refs = as_sql_refs(&sql_params);
             let rows = client.query(&sql, &refs).await.map_err(rt_err)?;
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let out = pyo3::types::PyList::empty(py);
                 for row in &rows {
                     out.append(row_to_pydict(py, row)?)?;
                 }
-                Ok::<PyObject, PyErr>(out.into_py(py))
+                out.into_py_any(py)
             })
         })
     }
@@ -108,15 +108,15 @@ impl PyDatabase {
         &self,
         py: Python<'py>,
         sql: String,
-        params: &PyTuple,
-    ) -> PyResult<&'py PyAny> {
+        params: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let pool = self.pool.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let client = pool.get().await.map_err(rt_err)?;
             let refs = as_sql_refs(&sql_params);
             let row = client.query_opt(&sql, &refs).await.map_err(rt_err)?;
-            Python::with_gil(|py| match row {
+            Python::attach(|py| match row {
                 Some(r) => row_to_pydict(py, &r),
                 None => Ok(py.None()),
             })
@@ -129,23 +129,23 @@ impl PyDatabase {
         &self,
         py: Python<'py>,
         sql: String,
-        params: &PyTuple,
-    ) -> PyResult<&'py PyAny> {
+        params: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let pool = self.pool.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let client = pool.get().await.map_err(rt_err)?;
             let refs = as_sql_refs(&sql_params);
             let row = client.query_opt(&sql, &refs).await.map_err(rt_err)?;
-            Python::with_gil(|py| match row {
+            Python::attach(|py| match row {
                 Some(r) if !r.is_empty() => {
                     let dict = row_to_pydict(py, &r)?;
-                    let dict = dict.as_ref(py).downcast::<pyo3::types::PyDict>()?;
+                    let dict = dict.bind(py).downcast::<pyo3::types::PyDict>()?;
                     // First column by position.
                     let name = r.columns()[0].name();
                     Ok(dict
                         .get_item(name)?
-                        .map(|v| v.into_py(py))
+                        .map(|v| v.unbind())
                         .unwrap_or_else(|| py.None()))
                 }
                 _ => Ok(py.None()),
@@ -165,9 +165,9 @@ impl PyDatabase {
     }
 
     /// Verify connectivity by acquiring a connection and running `SELECT 1`.
-    fn ping<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    fn ping<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let pool = self.pool.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let client = pool.get().await.map_err(rt_err)?;
             client.execute("SELECT 1", &[]).await.map_err(rt_err)?;
             Ok(true)
@@ -175,11 +175,11 @@ impl PyDatabase {
     }
 
     /// Close the pool, dropping all idle connections.
-    fn close<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let pool = self.pool.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             pool.close();
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -206,15 +206,15 @@ pub struct PyTransaction {
 
 #[pymethods]
 impl PyTransaction {
-    fn __aenter__<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    fn __aenter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let pool = self.pool.clone();
         let slot = self.conn.clone();
         let this = self.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let client = pool.get().await.map_err(rt_err)?;
             client.batch_execute("BEGIN").await.map_err(rt_err)?;
             *slot.lock().await = Some(client);
-            Ok(Python::with_gil(|py| this.into_py(py)))
+            Ok(Python::attach(|py| this.into_py_any(py))?)
         })
     }
 
@@ -225,10 +225,10 @@ impl PyTransaction {
         exc_type: PyObject,
         _exc_val: PyObject,
         _exc_tb: PyObject,
-    ) -> PyResult<&'py PyAny> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let slot = self.conn.clone();
         let errored = !exc_type.is_none(py);
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             if let Some(client) = slot.lock().await.take() {
                 let stmt = if errored { "ROLLBACK" } else { "COMMIT" };
                 client.batch_execute(stmt).await.map_err(rt_err)?;
@@ -241,10 +241,10 @@ impl PyTransaction {
 
     /// Execute a statement inside the transaction; returns rows affected.
     #[pyo3(signature = (sql, *params))]
-    fn execute<'py>(&self, py: Python<'py>, sql: String, params: &PyTuple) -> PyResult<&'py PyAny> {
+    fn execute<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let slot = self.conn.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = slot.lock().await;
             let client = guard
                 .as_ref()
@@ -257,22 +257,22 @@ impl PyTransaction {
 
     /// Fetch rows inside the transaction.
     #[pyo3(signature = (sql, *params))]
-    fn fetch<'py>(&self, py: Python<'py>, sql: String, params: &PyTuple) -> PyResult<&'py PyAny> {
+    fn fetch<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let slot = self.conn.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = slot.lock().await;
             let client = guard
                 .as_ref()
                 .ok_or_else(|| rt_err("transaction is not active (use `async with`)"))?;
             let refs = as_sql_refs(&sql_params);
             let rows = client.query(&sql, &refs).await.map_err(rt_err)?;
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let out = pyo3::types::PyList::empty(py);
                 for row in &rows {
                     out.append(row_to_pydict(py, row)?)?;
                 }
-                Ok::<PyObject, PyErr>(out.into_py(py))
+                out.into_py_any(py)
             })
         })
     }
@@ -283,18 +283,18 @@ impl PyTransaction {
         &self,
         py: Python<'py>,
         sql: String,
-        params: &PyTuple,
-    ) -> PyResult<&'py PyAny> {
+        params: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let slot = self.conn.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = slot.lock().await;
             let client = guard
                 .as_ref()
                 .ok_or_else(|| rt_err("transaction is not active (use `async with`)"))?;
             let refs = as_sql_refs(&sql_params);
             let row = client.query_opt(&sql, &refs).await.map_err(rt_err)?;
-            Python::with_gil(|py| match row {
+            Python::attach(|py| match row {
                 Some(r) => row_to_pydict(py, &r),
                 None => Ok(py.None()),
             })

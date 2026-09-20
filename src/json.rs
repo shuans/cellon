@@ -57,7 +57,7 @@ pub fn serialize_json_pretty(value: &serde_json::Value) -> Result<String, String
 
 /// Convert a Python object to serde_json::Value.
 #[inline]
-pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, String> {
+pub fn python_to_json<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Result<serde_json::Value, String> {
     // Handle None
     if obj.is_none() {
         return Ok(serde_json::Value::Null);
@@ -108,7 +108,7 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
         // PERF: Pre-allocate vec with known capacity
         let mut items = Vec::with_capacity(list.len());
         for item in list.iter() {
-            items.push(python_to_json(py, item)?);
+            items.push(python_to_json(py, &item)?);
         }
         return Ok(serde_json::Value::Array(items));
     }
@@ -121,7 +121,7 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
             let key_str = key
                 .extract::<String>()
                 .map_err(|_| "Dict keys must be strings".to_string())?;
-            let value_json = python_to_json(py, value)?;
+            let value_json = python_to_json(py, &value)?;
             map.insert(key_str, value_json);
         }
         return Ok(serde_json::Value::Object(map));
@@ -132,7 +132,7 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
         // PERF: Pre-allocate vec with known capacity
         let mut items = Vec::with_capacity(tuple.len());
         for item in tuple.iter() {
-            items.push(python_to_json(py, item)?);
+            items.push(python_to_json(py, &item)?);
         }
         return Ok(serde_json::Value::Array(items));
     }
@@ -201,7 +201,10 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
 /// Returns Ok(Some(bytes)) for normal dicts/lists/primitives,
 /// Returns Ok(None) for Response objects (caller must fall back to python_to_json).
 #[inline]
-pub fn python_to_json_bytes_direct(py: Python<'_>, obj: &PyAny) -> Result<Option<Vec<u8>>, String> {
+pub fn python_to_json_bytes_direct<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+) -> Result<Option<Vec<u8>>, String> {
     // PERF: Type-check (a cheap isinstance) instead of probing with
     // `extract::<T>()`, which allocates and clears a Python exception on every
     // failed attempt. dict/list first (most handlers return a dict), then scalars.
@@ -222,7 +225,7 @@ pub fn python_to_json_bytes_direct(py: Python<'_>, obj: &PyAny) -> Result<Option
 }
 
 /// Write a Python object as JSON directly to a byte buffer.
-fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<(), String> {
+fn write_json_value<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>, buf: &mut Vec<u8>) -> Result<(), String> {
     use std::io::Write;
 
     // Handle None
@@ -282,7 +285,7 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
             if i > 0 {
                 buf.push(b',');
             }
-            write_json_value(py, item, buf)?;
+            write_json_value(py, &item, buf)?;
         }
         buf.push(b']');
         return Ok(());
@@ -302,7 +305,7 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
             first = false;
             write_json_string(&key_str, buf);
             buf.push(b':');
-            write_json_value(py, value, buf)?;
+            write_json_value(py, &value, buf)?;
         }
         buf.push(b'}');
         return Ok(());
@@ -315,7 +318,7 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
             if i > 0 {
                 buf.push(b',');
             }
-            write_json_value(py, item, buf)?;
+            write_json_value(py, &item, buf)?;
         }
         buf.push(b']');
         return Ok(());
@@ -400,30 +403,30 @@ fn write_json_string(s: &str, buf: &mut Vec<u8>) {
 pub fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.into_py(py)),
+        serde_json::Value::Bool(b) => (*b).into_py_any(py),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i.into_py(py))
+                i.into_py_any(py)
             } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py(py))
+                f.into_py_any(py)
             } else {
                 Ok(py.None())
             }
         }
-        serde_json::Value::String(s) => Ok(s.into_py(py)),
+        serde_json::Value::String(s) => s.as_str().into_py_any(py),
         serde_json::Value::Array(arr) => {
             let list = PyList::empty(py);
             for item in arr {
                 list.append(json_to_python(py, item)?)?;
             }
-            Ok(list.into_py(py))
+            list.into_py_any(py)
         }
         serde_json::Value::Object(obj) => {
             let dict = PyDict::new(py);
             for (key, val) in obj {
                 dict.set_item(key, json_to_python(py, val)?)?;
             }
-            Ok(dict.into_py(py))
+            dict.into_py_any(py)
         }
     }
 }

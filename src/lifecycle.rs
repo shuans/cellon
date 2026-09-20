@@ -127,7 +127,7 @@ pub struct PyHook {
 
 impl PyHook {
     pub fn new(handler: PyObject) -> Self {
-        let is_async = Python::with_gil(|py| {
+        let is_async = Python::attach(|py| {
             let inspect = py.import("inspect").ok();
             inspect
                 .and_then(|i| i.call_method1("iscoroutinefunction", (&handler,)).ok())
@@ -143,7 +143,7 @@ impl PyHook {
 
     /// Execute the hook (sync or async).
     pub fn execute(&self) -> Result<(), String> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self.handler.call0(py).map_err(|e| e.to_string())?;
             if self.is_async {
                 Self::run_coroutine(py, &result)?;
@@ -176,7 +176,7 @@ impl PyHook {
 
     /// Execute with request argument.
     pub fn execute_with_request(&self, request: &mut Request) -> HookResult {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self
                 .handler
                 .call1(py, (request.clone(),))
@@ -192,13 +192,13 @@ impl PyHook {
                 return Self::parse_hook_result(py, awaited);
             }
 
-            Self::parse_hook_result(py, result.as_ref(py))
+            Self::parse_hook_result(py, result.bind(py))
         })
     }
 
     /// Execute with request and response arguments.
     pub fn execute_with_response(&self, request: &Request, response: &mut Response) -> HookResult {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self
                 .handler
                 .call1(py, (request.clone(), response.clone()))
@@ -213,12 +213,12 @@ impl PyHook {
                 return Self::parse_hook_result(py, awaited);
             }
 
-            Self::parse_hook_result(py, result.as_ref(py))
+            Self::parse_hook_result(py, result.bind(py))
         })
     }
 
     /// Parse hook result from Python return value.
-    fn parse_hook_result(py: Python<'_>, result: &PyAny) -> HookResult {
+    fn parse_hook_result<'py>(py: Python<'py>, result: &Bound<'py, PyAny>) -> HookResult {
         // None means continue
         if result.is_none() {
             return Ok(HookAction::Continue);
@@ -405,7 +405,7 @@ impl LifecycleHooks {
             return;
         }
         for hook in hooks.iter() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let error_dict = pyo3::types::PyDict::new(py);
                 let _ = error_dict.set_item("message", error.to_string());
                 let _ = error_dict.set_item("status", error.status_code());
@@ -418,7 +418,7 @@ impl LifecycleHooks {
     /// Execute worker start hooks.
     pub fn execute_worker_start(&self, worker_id: usize) -> Result<(), String> {
         for hook in self.on_worker_start.read().iter() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 hook.handler
                     .call1(py, (worker_id,))
                     .map_err(|e| e.to_string())
@@ -430,7 +430,7 @@ impl LifecycleHooks {
     /// Execute worker shutdown hooks.
     pub fn execute_worker_shutdown(&self, worker_id: usize) -> Result<(), String> {
         for hook in self.on_worker_shutdown.read().iter() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let _ = hook.handler.call1(py, (worker_id,));
             });
         }

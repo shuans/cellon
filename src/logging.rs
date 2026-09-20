@@ -133,8 +133,11 @@ pub fn current_config() -> LoggingConfig {
 /// below is still recorded so `LoggingMiddleware` honours it.
 #[pyfunction]
 #[pyo3(signature = (config = None))]
-pub fn configure_logging(config: Option<&PyLoggingConfig>) -> PyResult<()> {
-    let cfg = config.map(py_to_inner).unwrap_or_default();
+pub fn configure_logging(config: Option<&Bound<'_, PyLoggingConfig>>) -> PyResult<()> {
+    let cfg = match config {
+        Some(config) => py_to_inner(&config.borrow()),
+        None => LoggingConfig::default(),
+    };
     let _ = GLOBAL_CONFIG.set(cfg.clone());
 
     let filter = tracing_subscriber::EnvFilter::try_new(&cfg.level)

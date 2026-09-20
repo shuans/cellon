@@ -299,7 +299,7 @@ impl PythonExceptionInfo {
             traceback,
             file: None,
             line: None,
-            exception: Some(err.value(py).into_py(py)),
+            exception: Some(err.value(py).clone().into_any().unbind()),
         }
     }
 }
@@ -324,7 +324,7 @@ impl PyErrorHandler {
     }
 
     pub fn handle(&self, error: &AppError, request: &Request) -> Response {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Create error info dict for Python
             let error_dict = pyo3::types::PyDict::new(py);
             let _ = error_dict.set_item("message", error.to_string());
@@ -343,8 +343,8 @@ impl PyErrorHandler {
                     .exception
                     .as_ref()
                     .map(|value| value.clone_ref(py))
-                    .unwrap_or_else(|| error_dict.into_py(py)),
-                _ => error_dict.into_py(py),
+                    .unwrap_or_else(|| error_dict.clone().into_any().unbind()),
+                _ => error_dict.clone().into_any().unbind(),
             };
 
             match self.handler.call1(py, (request.clone(), exception)) {
@@ -365,7 +365,7 @@ impl PyErrorHandler {
                         return resp;
                     }
                     // Accept any JSON-serializable value as a response body.
-                    if let Ok(json_value) = python_to_json(py, result.as_ref(py)) {
+                    if let Ok(json_value) = python_to_json(py, result.bind(py)) {
                         return Response::from_json_value(json_value, error.status_code());
                     }
                     // Fallback to default error response

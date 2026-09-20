@@ -373,7 +373,11 @@ impl std::error::Error for XmlError {}
 // ============================================================================
 
 /// Convert Python object to XML string.
-pub fn python_to_xml(py: Python<'_>, obj: &PyAny, root_name: &str) -> Result<String, String> {
+pub fn python_to_xml<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+    root_name: &str,
+) -> Result<String, String> {
     let json_value = python_to_json_value(py, obj)?;
     let config = XmlConfig::new().root(root_name);
     let serializer = XmlSerializer::with_config(config);
@@ -383,7 +387,7 @@ pub fn python_to_xml(py: Python<'_>, obj: &PyAny, root_name: &str) -> Result<Str
 }
 
 /// Convert Python object to JSON value.
-fn python_to_json_value(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, String> {
+fn python_to_json_value<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Result<serde_json::Value, String> {
     if obj.is_none() {
         return Ok(serde_json::Value::Null);
     }

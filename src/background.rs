@@ -48,8 +48,14 @@ impl PythonBackgroundTask {
 
 impl BackgroundTask for PythonBackgroundTask {
     fn execute(&self) {
-        Python::with_gil(|py| {
-            let args_tuple = pyo3::types::PyTuple::new(py, &self.args);
+        Python::attach(|py| {
+            let args_tuple = match pyo3::types::PyTuple::new(py, &self.args) {
+                Ok(args) => args,
+                Err(e) => {
+                    eprintln!("Background task '{}' failed: {}", self.name, e);
+                    return;
+                }
+            };
             if let Err(e) = self.handler.call1(py, args_tuple) {
                 eprintln!("Background task '{}' failed: {}", self.name, e);
             }
