@@ -264,7 +264,7 @@ impl FieldError {
 }
 
 /// Python exception information with traceback.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PythonExceptionInfo {
     /// Exception type name (e.g., "ValueError").
     pub exception_type: String,
@@ -278,6 +278,23 @@ pub struct PythonExceptionInfo {
     pub line: Option<u32>,
     /// The original Python exception instance, preserved for custom handlers.
     pub exception: Option<Py<PyAny>>,
+}
+
+impl Clone for PythonExceptionInfo {
+    fn clone(&self) -> Self {
+        Self {
+            exception_type: self.exception_type.clone(),
+            message: self.message.clone(),
+            traceback: self.traceback.clone(),
+            file: self.file.clone(),
+            line: self.line,
+            // `Py<T>` is not `Clone` in pyo3 0.29, so the ref is cloned under the GIL.
+            exception: self
+                .exception
+                .as_ref()
+                .map(|e| Python::attach(|py| e.clone_ref(py))),
+        }
+    }
 }
 
 impl PythonExceptionInfo {

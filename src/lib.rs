@@ -199,8 +199,8 @@ impl Cello {
     }
 
     /// Register a blueprint.
-    pub fn register_blueprint(&mut self, blueprint: &Blueprint) -> PyResult<()> {
-        let routes = blueprint.get_all_routes();
+    pub fn register_blueprint(&mut self, py: Python<'_>, blueprint: &Blueprint) -> PyResult<()> {
+        let routes = blueprint.get_all_routes(py);
         for (method, path, handler) in routes {
             self.add_route(&method, &path, handler)?;
         }
@@ -1060,8 +1060,11 @@ def openapi_handler(request):
         let guards = self.guards.clone();
         let prometheus = self.prometheus.clone();
         let error_handlers = self.error_handlers.clone();
-        let startup_handlers = self.startup_handlers.clone();
-        let shutdown_handlers = self.shutdown_handlers.clone();
+        // `Py<T>` is not `Clone` in pyo3 0.29, so clone the handler refs under the GIL.
+        let startup_handlers: Vec<Py<PyAny>> =
+            self.startup_handlers.iter().map(|h| h.clone_ref(py)).collect();
+        let shutdown_handlers: Vec<Py<PyAny>> =
+            self.shutdown_handlers.iter().map(|h| h.clone_ref(py)).collect();
 
         // Limits/timeouts are plain Copy values captured for the server config.
         let max_body_size = self.max_body_size;
@@ -1143,8 +1146,8 @@ def openapi_handler(request):
                     );
 
                     // Startup hooks
-                    for handler in &startup_handlers {
-                        if let Err(e) = run_lifecycle_handler_async(handler.clone()).await {
+                    for handler in startup_handlers {
+                        if let Err(e) = run_lifecycle_handler_async(handler).await {
                             eprintln!("Error in startup handler: {e}");
                         }
                     }
@@ -1152,8 +1155,8 @@ def openapi_handler(request):
                     let _ = server.run().await;
 
                     // Shutdown hooks
-                    for handler in &shutdown_handlers {
-                        match run_lifecycle_handler_async(handler.clone()).await {
+                    for handler in shutdown_handlers {
+                        match run_lifecycle_handler_async(handler).await {
                             Err(e) if !e.to_string().contains("KeyboardInterrupt") => {
                                 eprintln!("Error in shutdown handler: {e}");
                             }

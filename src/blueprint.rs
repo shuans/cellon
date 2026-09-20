@@ -10,7 +10,9 @@ use std::sync::Arc;
 use crate::middleware::MiddlewareChain;
 
 /// Route definition within a blueprint.
-#[derive(Clone)]
+///
+/// `Py<T>` no longer implements `Clone` (pyo3 0.29), so this is not `Clone`;
+/// handlers are cloned with `clone_ref(py)` when routes are collected.
 pub struct RouteDefinition {
     pub method: String,
     pub path: String,
@@ -92,20 +94,24 @@ impl Blueprint {
     }
 
     /// Get all routes including from nested blueprints.
-    pub fn get_all_routes(&self) -> Vec<(String, String, Py<PyAny>)> {
+    pub fn get_all_routes(&self, py: Python<'_>) -> Vec<(String, String, Py<PyAny>)> {
         let mut all_routes = Vec::new();
 
         // Add routes from this blueprint
         let routes = self.routes.read();
         for route in routes.iter() {
             let full_path = format!("{}{}", self.prefix, route.path);
-            all_routes.push((route.method.clone(), full_path, route.handler.clone()));
+            all_routes.push((
+                route.method.clone(),
+                full_path,
+                route.handler.clone_ref(py),
+            ));
         }
 
         // Add routes from nested blueprints
         let children = self.children.read();
         for child in children.iter() {
-            let child_routes = child.get_all_routes();
+            let child_routes = child.get_all_routes(py);
             for (method, path, handler) in child_routes {
                 let full_path = format!("{}{}", self.prefix, path);
                 all_routes.push((method, full_path, handler));

@@ -357,8 +357,8 @@ impl WebSocketRegistry {
         self.handlers.write().insert(path.to_string(), handler);
     }
 
-    pub fn get(&self, path: &str) -> Option<Py<PyAny>> {
-        self.handlers.read().get(path).cloned()
+    pub fn get(&self, path: &str, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.handlers.read().get(path).map(|h| h.clone_ref(py))
     }
 
     pub fn contains(&self, path: &str) -> bool {

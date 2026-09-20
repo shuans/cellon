@@ -9,7 +9,7 @@
 //! - Dependency overrides for testing
 
 use parking_lot::RwLock;
-use pyo3::{Py, PyAny};
+use pyo3::{Py, PyAny, Python};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::future::Future;
@@ -256,8 +256,8 @@ impl DependencyContainer {
     }
 
     /// Get a Python singleton by name.
-    pub fn get_py_singleton(&self, name: &str) -> Option<Py<PyAny>> {
-        self.py_singletons.read().get(name).cloned()
+    pub fn get_py_singleton(&self, name: &str, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.py_singletons.read().get(name).map(|v| v.clone_ref(py))
     }
 
     /// Check if any Python singletons are registered (for fast-path optimization).

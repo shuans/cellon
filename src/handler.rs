@@ -159,9 +159,9 @@ impl HandlerRegistry {
 
     /// Get a handler by its ID.
     #[inline]
-    pub fn get(&self, id: usize) -> Option<Py<PyAny>> {
+    pub fn get(&self, id: usize, py: Python<'_>) -> Option<Py<PyAny>> {
         let handlers = self.handlers.read();
-        handlers.get(id).map(|m| m.handler.clone())
+        handlers.get(id).map(|m| m.handler.clone_ref(py))
     }
 
     /// Get handler metadata by ID.
@@ -292,11 +292,11 @@ impl HandlerRegistry {
     ///
     /// Note: This does NOT support async handlers. Use invoke_async instead.
     pub fn invoke(&self, handler_id: usize, request: Request) -> Result<serde_json::Value, String> {
-        let handler = self
-            .get(handler_id)
-            .ok_or_else(|| format!("Handler {handler_id} not found"))?;
-
         Python::attach(|py| {
+            let handler = self
+                .get(handler_id, py)
+                .ok_or_else(|| format!("Handler {handler_id} not found"))?;
+
             // Call the Python handler with the request
             let result = handler
                 .call1(py, (request,))
@@ -431,12 +431,12 @@ fn call_handler(
             Some(params) => {
                 let kwargs = pyo3::types::PyDict::new(py);
                 for (param_name, dep_name) in params {
-                    if let Some(dep_value) = dependency_container.get_py_singleton(dep_name) {
+                    if let Some(dep_value) = dependency_container.get_py_singleton(dep_name, py) {
                         let _ = kwargs.set_item(param_name, dep_value);
                     }
                 }
                 meta.handler
-                    .call(py, (request,), Some(kwargs))
+                    .call(py, (request,), Some(&kwargs))
                     .map_err(|e| HandlerError::from_pyerr(py, e))?
             }
             None => {

@@ -879,7 +879,7 @@ async fn handle_websocket_upgrade(
     peer: String,
 ) -> Option<HyperResponse<Full<Bytes>>> {
     let key = crate::websocket::websocket_key(req.headers())?;
-    let handler = registry.get(req.uri().path())?;
+    let handler = Python::attach(|py| registry.get(req.uri().path(), py))?;
     let accept = crate::websocket::accept_key(&key);
     // Take the OnUpgrade future out of the request extensions. Unlike
     // `hyper::upgrade::on`, this does not panic when the extension is missing
