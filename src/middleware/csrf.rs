@@ -7,7 +7,7 @@
 //! - Origin/Referer validation
 
 use hmac::{Hmac, Mac};
-use rand::Rng;
+use rand::RngExt;
 use sha2::Sha256;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;

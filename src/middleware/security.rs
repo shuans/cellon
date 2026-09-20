@@ -9,7 +9,7 @@
 //! - Permissions-Policy
 //! - Cross-Origin policies
 
-use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 
 use super::{Middleware, MiddlewareAction, MiddlewareResult};

@@ -7,7 +7,7 @@
 //! - Session security options
 
 use parking_lot::RwLock;
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

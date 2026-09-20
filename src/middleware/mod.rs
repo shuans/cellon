@@ -648,7 +648,7 @@ impl Middleware for LoggingMiddleware {
             "request started"
         );
         if self.log_headers {
-            for (key, value) in &request.headers {
+            for (key, value) in request.headers.iter() {
                 tracing::debug!(header_key = %key, header_value = %value, "request header");
             }
         }

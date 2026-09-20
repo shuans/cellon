@@ -235,8 +235,6 @@ async fn send_response<S>(
 ) where
     S: h3::quic::SendStream<Bytes>,
 {
-    use http_body_util::BodyExt;
-
     let status = response.status();
     let mut builder = HttpResponse::builder().status(status);
     for (key, value) in response.headers() {
@@ -250,12 +248,10 @@ async fn send_response<S>(
     if stream.send_response(head).await.is_err() {
         return;
     }
-    let body = response.into_body();
-    if let Ok(collected) = body.collect().await {
-        let bytes = collected.to_bytes();
-        if !bytes.is_empty() {
-            let _ = stream.send_data(bytes).await;
-        }
+    // `Full<Bytes>` holds a single chunk: `into_inner()` is `None` for an empty
+    // body and `Some(bytes)` otherwise, so collecting the body is unnecessary.
+    if let Some(bytes) = response.into_body().into_inner() {
+        let _ = stream.send_data(bytes).await;
     }
     let _ = stream.finish().await;
 }

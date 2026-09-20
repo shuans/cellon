@@ -5,7 +5,7 @@
 //! - Request ID propagation
 //! - Custom ID formats
 
-use rand::Rng;
+use rand::RngExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
