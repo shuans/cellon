@@ -364,7 +364,7 @@ __all__ = [
     "validate_rate_limit_config",
     "validate_tls_config",
 ]
-__version__ = "1.4.2"
+__version__ = "1.4.4"
 
 
 class Blueprint:
@@ -1204,7 +1204,7 @@ class App:
         """
         self._app.invalidate_cache(tags)
 
-    def enable_openapi(self, title: str = "Cello API", version: str = "1.4.2"):
+    def enable_openapi(self, title: str = "Cello API", version: str = "1.4.4"):
         """
         Enable OpenAPI documentation endpoints.
 
@@ -1215,7 +1215,7 @@ class App:
 
         Args:
             title: API title (default: "Cello API")
-            version: API version (default: "1.4.2")
+            version: API version (default: "1.4.4")
         """
         # Store for closure
         api_title = title

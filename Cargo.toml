@@ -1,10 +1,10 @@
 [package]
 name = "cellon"
-version = "1.4.3"
-edition = "2021"
+version = "1.4.4"
+edition = "2024"
 description = "Ultra-fast Rust-powered Python async web framework"
 license = "MIT"
-repository = "https://github.com/jagadeesh32/cello.git"
+repository = "https://github.com/shuans/cellon.git"
 keywords = ["web", "framework", "async", "rust", "python"]
 categories = ["web-programming::http-server", "asynchronous"]
 
