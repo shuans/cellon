@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -41,7 +42,7 @@ impl PyHttpResponse {
     }
 
     /// Parse response body as JSON, returning a Python object.
-    fn json(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let json_mod = py.import("json")?;
         let raw = PyBytes::new(py, &self.body);
         json_mod.call_method1("loads", (raw,))?.into_py_any(py)
@@ -106,7 +107,7 @@ impl PyAsyncClient {
         &self,
         py: Python<'py>,
         url: String,
-        json: Option<PyObject>,
+        json: Option<Py<PyAny>>,
         content: Option<Vec<u8>>,
         headers: Option<HashMap<String, String>>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -123,7 +124,7 @@ impl PyAsyncClient {
         &self,
         py: Python<'py>,
         url: String,
-        json: Option<PyObject>,
+        json: Option<Py<PyAny>>,
         content: Option<Vec<u8>>,
         headers: Option<HashMap<String, String>>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -140,7 +141,7 @@ impl PyAsyncClient {
         &self,
         py: Python<'py>,
         url: String,
-        json: Option<PyObject>,
+        json: Option<Py<PyAny>>,
         content: Option<Vec<u8>>,
         headers: Option<HashMap<String, String>>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -174,9 +175,9 @@ impl PyAsyncClient {
     fn __aexit__<'py>(
         &self,
         py: Python<'py>,
-        _exc_type: PyObject,
-        _exc_val: PyObject,
-        _exc_tb: PyObject,
+        _exc_type: Py<PyAny>,
+        _exc_val: Py<PyAny>,
+        _exc_tb: Py<PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         pyo3_async_runtimes::tokio::future_into_py(py, async { Ok(Python::attach(|py| py.None())) })
     }
@@ -186,7 +187,7 @@ impl PyAsyncClient {
 
 /// Serialize a Python object to JSON bytes while the GIL is held.
 /// Returns `None` when `json` is `None` (no body).
-fn to_json_bytes(py: Python<'_>, json: Option<PyObject>) -> PyResult<Option<Vec<u8>>> {
+fn to_json_bytes(py: Python<'_>, json: Option<Py<PyAny>>) -> PyResult<Option<Vec<u8>>> {
     match json {
         None => Ok(None),
         Some(obj) => {
@@ -208,7 +209,7 @@ async fn dispatch(
     headers: Option<HashMap<String, String>>,
     json_bytes: Option<Vec<u8>>,
     content: Option<Vec<u8>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     if let Some(hdrs) = headers {
         for (k, v) in hdrs {
             builder = builder.header(k.as_str(), v.as_str());

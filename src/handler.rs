@@ -67,7 +67,7 @@ pub enum HandlerResult {
 /// Cached metadata for a handler to avoid per-request introspection.
 struct HandlerMeta {
     /// The Python handler callable
-    handler: PyObject,
+    handler: Py<PyAny>,
     /// Whether this handler is async (returns coroutine)
     is_async: AtomicBool,
     /// Whether we've determined the async status yet
@@ -127,13 +127,13 @@ impl HandlerRegistry {
     ///
     /// # Returns
     /// The unique handler ID for this function.
-    pub fn register(&mut self, handler: PyObject) -> usize {
+    pub fn register(&mut self, handler: Py<PyAny>) -> usize {
         let policy = Python::attach(|py| {
             match handler
                 .bind(py)
                 .getattr("__cello_blocking__")
                 .ok()
-                .and_then(|v| if v.is_none() { None } else { v.is_true().ok() })
+                .and_then(|v| if v.is_none() { None } else { v.is_truthy().ok() })
             {
                 Some(true) => POLICY_ALWAYS,
                 Some(false) => POLICY_NEVER,
@@ -159,7 +159,7 @@ impl HandlerRegistry {
 
     /// Get a handler by its ID.
     #[inline]
-    pub fn get(&self, id: usize) -> Option<PyObject> {
+    pub fn get(&self, id: usize) -> Option<Py<PyAny>> {
         let handlers = self.handlers.read();
         handlers.get(id).map(|m| m.handler.clone())
     }
@@ -321,7 +321,7 @@ impl HandlerRegistry {
 /// Drive a coroutine to completion, then serialize its result.
 ///
 /// Phase 2 (GIL released during I/O waits) + Phase 3 (GIL) of the inline path.
-async fn drive_and_serialize(coro: PyObject) -> Result<HandlerResult, HandlerError> {
+async fn drive_and_serialize(coro: Py<PyAny>) -> Result<HandlerResult, HandlerError> {
     // ── Phase 2 (GIL released during I/O waits): drive coroutine ────────────
     //
     // The coroutine is submitted to a single PERSISTENT asyncio loop (see
@@ -333,8 +333,8 @@ async fn drive_and_serialize(coro: PyObject) -> Result<HandlerResult, HandlerErr
     //
     // We offload the wait to a blocking thread so the Tokio worker is free; the
     // wait inside `Future.result()` releases the GIL.
-    let final_result: PyObject = {
-        let (tx, rx) = tokio::sync::oneshot::channel::<Result<PyObject, HandlerError>>();
+    let final_result: Py<PyAny> = {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<Py<PyAny>, HandlerError>>();
         tokio::task::spawn_blocking(move || {
             let result = Python::attach(|py| {
                 crate::async_loop::run_coroutine_blocking(py, coro.bind(py))
@@ -374,13 +374,13 @@ fn call_handler(
     dependency_container: &crate::dependency::DependencyContainer,
     has_dependencies: bool,
     time_it: bool,
-) -> Result<(PyObject, bool, Duration), HandlerError> {
+) -> Result<(Py<PyAny>, bool, Duration), HandlerError> {
     // Time the Python call only, measured *inside* the GIL. Wall-clock around
     // `Python::attach` would also count time spent waiting to acquire the GIL,
     // which under concurrency misclassifies cheap handlers as blocking. Skipped
     // entirely when the handler's policy is fixed and no promotion can result.
     let started = time_it.then(Instant::now);
-    let call_result: PyObject = if has_dependencies {
+    let call_result: Py<PyAny> = if has_dependencies {
         // DI resolution — cache parameter info on first call
         if !meta.di_checked.load(Ordering::Relaxed) {
             let mut di_params = Vec::new();
@@ -391,7 +391,7 @@ fn call_handler(
                         let depends_type = cello_module.and_then(|m| m.getattr("Depends").ok());
 
                         if let Ok(items) = parameters.call_method0("items") {
-                            if let Ok(iter) = items.iter() {
+                            if let Ok(iter) = items.try_iter() {
                                 for item in iter.flatten() {
                                     if let (Ok(name), Ok(param)) = (
                                         item.get_item(0).and_then(|v| v.extract::<String>()),
@@ -460,14 +460,14 @@ fn call_handler(
         let is_async = py
             .import("inspect")
             .and_then(|inspect| inspect.call_method1("iscoroutine", (call_result.bind(py),)))
-            .and_then(|r| r.is_true())
+            .and_then(|r| r.is_truthy())
             .unwrap_or(false);
         meta.is_async.store(is_async, Ordering::Relaxed);
         meta.async_checked.store(true, Ordering::Relaxed);
         is_async
     };
 
-    // PyObject (Py<PyAny>) is Send — safe to move out of GIL closure
+    // Py<PyAny> is Send — safe to move out of GIL closure
     Ok((
         call_result,
         is_coro,

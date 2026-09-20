@@ -443,11 +443,11 @@ impl Guard for NotGuard {
 
 /// Guard that calls a Python function.
 pub struct PythonGuard {
-    handler: PyObject,
+    handler: Py<PyAny>,
 }
 
 impl PythonGuard {
-    pub fn new(handler: PyObject) -> Self {
+    pub fn new(handler: Py<PyAny>) -> Self {
         Self { handler }
     }
 }

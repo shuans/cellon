@@ -13,6 +13,7 @@
 //!   releases the GIL, so while one coroutine awaits I/O the loop runs others and the
 //!   GIL is not pinned for the coroutine's whole lifetime.
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::sync::OnceLock;
@@ -114,7 +115,7 @@ pub fn ensure_started(py: Python<'_>) {
 /// MUST be called from a blocking context (e.g. `tokio::task::spawn_blocking`): the
 /// wait inside `Future.result()` releases the GIL so the loop and other coroutines
 /// keep running concurrently.
-pub fn run_coroutine_blocking<'py>(py: Python<'py>, coro: &Bound<'py, PyAny>) -> PyResult<PyObject> {
+pub fn run_coroutine_blocking<'py>(py: Python<'py>, coro: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
     let event_loop = get_loop(py)?;
     let asyncio = py.import("asyncio")?;
     let cfut = asyncio.call_method1(

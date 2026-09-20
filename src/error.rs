@@ -277,7 +277,7 @@ pub struct PythonExceptionInfo {
     /// Line number (if available).
     pub line: Option<u32>,
     /// The original Python exception instance, preserved for custom handlers.
-    pub exception: Option<PyObject>,
+    pub exception: Option<Py<PyAny>>,
 }
 
 impl PythonExceptionInfo {
@@ -315,11 +315,11 @@ pub type ErrorHandlerFn = Arc<dyn Fn(&AppError, &Request) -> Response + Send + S
 
 /// Python error handler wrapper.
 pub struct PyErrorHandler {
-    handler: PyObject,
+    handler: Py<PyAny>,
 }
 
 impl PyErrorHandler {
-    pub fn new(handler: PyObject) -> Self {
+    pub fn new(handler: Py<PyAny>) -> Self {
         Self { handler }
     }
 
@@ -438,19 +438,19 @@ impl ErrorHandlerRegistry {
     }
 
     /// Register a global error handler.
-    pub fn set_global_handler(&self, handler: PyObject) {
+    pub fn set_global_handler(&self, handler: Py<PyAny>) {
         *self.global.write() = Some(Arc::new(PyErrorHandler::new(handler)));
     }
 
     /// Register a handler for a specific status code.
-    pub fn set_status_handler(&self, status: u16, handler: PyObject) {
+    pub fn set_status_handler(&self, status: u16, handler: Py<PyAny>) {
         self.status_handlers
             .write()
             .insert(status, Arc::new(PyErrorHandler::new(handler)));
     }
 
     /// Register a handler for a specific exception type.
-    pub fn set_exception_handler(&self, exception_type: impl Into<String>, handler: PyObject) {
+    pub fn set_exception_handler(&self, exception_type: impl Into<String>, handler: Py<PyAny>) {
         self.exception_handlers.write().insert(
             exception_type.into(),
             Arc::new(PyErrorHandler::new(handler)),
@@ -622,17 +622,17 @@ impl PyErrorHandlerRegistry {
     }
 
     /// Register a global error handler.
-    pub fn error_handler(&self, handler: PyObject) {
+    pub fn error_handler(&self, handler: Py<PyAny>) {
         self.inner.set_global_handler(handler);
     }
 
     /// Register a status code handler.
-    pub fn status_handler(&self, status: u16, handler: PyObject) {
+    pub fn status_handler(&self, status: u16, handler: Py<PyAny>) {
         self.inner.set_status_handler(status, handler);
     }
 
     /// Register an exception type handler.
-    pub fn exception_handler(&self, exception_type: String, handler: PyObject) {
+    pub fn exception_handler(&self, exception_type: String, handler: Py<PyAny>) {
         self.inner.set_exception_handler(exception_type, handler);
     }
 }

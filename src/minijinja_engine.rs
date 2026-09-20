@@ -194,7 +194,7 @@ impl PyMiniJinjaEngine {
     ///     engine.add_global("app_name", "My App")
     ///     engine.add_global("version", "1.1.0")
     ///     ```
-    pub fn add_global(&self, name: &str, value: PyObject, py: Python<'_>) -> PyResult<()> {
+    pub fn add_global(&self, name: &str, value: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
         let json_val = pyobj_to_json(value.bind(py))?;
         let mj_val = minijinja::Value::from_serialize(&json_val);
         self.inner.write().env.add_global(name.to_string(), mj_val);
@@ -292,19 +292,20 @@ pub fn pyobj_to_json(val: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     }
     // list / tuple → JSON array
     if val.is_instance_of::<PyList>() {
-        let list = val.downcast::<PyList>()?;
+        let list = val.cast::<PyList>()?;
         let arr: Vec<serde_json::Value> =
-            list.iter().map(pyobj_to_json).collect::<PyResult<_>>()?;
+            list.iter().map(|v| pyobj_to_json(&v)).collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
     if val.is_instance_of::<PyTuple>() {
-        let tup = val.downcast::<PyTuple>()?;
-        let arr: Vec<serde_json::Value> = tup.iter().map(pyobj_to_json).collect::<PyResult<_>>()?;
+        let tup = val.cast::<PyTuple>()?;
+        let arr: Vec<serde_json::Value> =
+            tup.iter().map(|v| pyobj_to_json(&v)).collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
     // dict → JSON object
     if val.is_instance_of::<PyDict>() {
-        let dict = val.downcast::<PyDict>()?;
+        let dict = val.cast::<PyDict>()?;
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract().unwrap_or_else(|_| k.str().unwrap().to_string());
@@ -314,7 +315,7 @@ pub fn pyobj_to_json(val: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     }
     // Dataclass / object with __dict__ → recurse into dict
     if let Ok(obj_dict) = val.getattr("__dict__") {
-        if let Ok(d) = obj_dict.downcast::<PyDict>() {
+        if let Ok(d) = obj_dict.cast::<PyDict>() {
             let mut map = serde_json::Map::new();
             for (k, v) in d.iter() {
                 let key: String = k.extract().unwrap_or_else(|_| k.str().unwrap().to_string());

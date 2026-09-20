@@ -126,7 +126,7 @@ impl PyContext {
     }
 
     /// Get a value by key.
-    pub fn get(&self, key: &str) -> Option<PyObject> {
+    pub fn get(&self, key: &str) -> Option<Py<PyAny>> {
         let ctx = self.inner.read();
         ctx.get_named(key).map(|v| {
             Python::attach(|py| crate::json::json_to_python(py, v).unwrap_or_else(|_| py.None()))
@@ -142,7 +142,7 @@ impl PyContext {
     }
 
     /// Remove a value by key.
-    pub fn remove(&self, key: &str) -> Option<PyObject> {
+    pub fn remove(&self, key: &str) -> Option<Py<PyAny>> {
         let mut ctx = self.inner.write();
         ctx.remove_named(key).map(|v| {
             Python::attach(|py| crate::json::json_to_python(py, &v).unwrap_or_else(|_| py.None()))
@@ -164,7 +164,7 @@ impl PyContext {
         self.inner.write().clear();
     }
 
-    fn __getitem__(&self, key: &str) -> PyResult<PyObject> {
+    fn __getitem__(&self, key: &str) -> PyResult<Py<PyAny>> {
         self.get(key)
             .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }

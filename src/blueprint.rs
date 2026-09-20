@@ -14,7 +14,7 @@ use crate::middleware::MiddlewareChain;
 pub struct RouteDefinition {
     pub method: String,
     pub path: String,
-    pub handler: PyObject,
+    pub handler: Py<PyAny>,
 }
 
 /// Blueprint for grouping routes with a common prefix.
@@ -61,27 +61,27 @@ impl Blueprint {
     }
 
     /// Register a GET route.
-    pub fn get(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn get(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("GET", path, handler)
     }
 
     /// Register a POST route.
-    pub fn post(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn post(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("POST", path, handler)
     }
 
     /// Register a PUT route.
-    pub fn put(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn put(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("PUT", path, handler)
     }
 
     /// Register a DELETE route.
-    pub fn delete(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn delete(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("DELETE", path, handler)
     }
 
     /// Register a PATCH route.
-    pub fn patch(&self, path: &str, handler: PyObject) -> PyResult<()> {
+    pub fn patch(&self, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         self.add_route("PATCH", path, handler)
     }
 
@@ -92,7 +92,7 @@ impl Blueprint {
     }
 
     /// Get all routes including from nested blueprints.
-    pub fn get_all_routes(&self) -> Vec<(String, String, PyObject)> {
+    pub fn get_all_routes(&self) -> Vec<(String, String, Py<PyAny>)> {
         let mut all_routes = Vec::new();
 
         // Add routes from this blueprint
@@ -116,7 +116,7 @@ impl Blueprint {
     }
 
     /// Internal route registration.
-    fn add_route(&self, method: &str, path: &str, handler: PyObject) -> PyResult<()> {
+    fn add_route(&self, method: &str, path: &str, handler: Py<PyAny>) -> PyResult<()> {
         let normalized_path = if path.starts_with('/') || path.is_empty() {
             path.to_string()
         } else {

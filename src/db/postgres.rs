@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod};
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use tokio::sync::Mutex;
@@ -140,7 +141,7 @@ impl PyDatabase {
             Python::attach(|py| match row {
                 Some(r) if !r.is_empty() => {
                     let dict = row_to_pydict(py, &r)?;
-                    let dict = dict.bind(py).downcast::<pyo3::types::PyDict>()?;
+                    let dict = dict.bind(py).cast::<pyo3::types::PyDict>()?;
                     // First column by position.
                     let name = r.columns()[0].name();
                     Ok(dict
@@ -222,9 +223,9 @@ impl PyTransaction {
     fn __aexit__<'py>(
         &self,
         py: Python<'py>,
-        exc_type: PyObject,
-        _exc_val: PyObject,
-        _exc_tb: PyObject,
+        exc_type: Py<PyAny>,
+        _exc_val: Py<PyAny>,
+        _exc_tb: Py<PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let slot = self.conn.clone();
         let errored = !exc_type.is_none(py);

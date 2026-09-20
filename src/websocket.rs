@@ -343,7 +343,7 @@ async fn receive_from_backend(backend: WsBackend) -> Option<WebSocketMessage> {
 
 /// WebSocket handler registry.
 pub struct WebSocketRegistry {
-    handlers: Arc<RwLock<HashMap<String, PyObject>>>,
+    handlers: Arc<RwLock<HashMap<String, Py<PyAny>>>>,
 }
 
 impl WebSocketRegistry {
@@ -353,11 +353,11 @@ impl WebSocketRegistry {
         }
     }
 
-    pub fn register(&self, path: &str, handler: PyObject) {
+    pub fn register(&self, path: &str, handler: Py<PyAny>) {
         self.handlers.write().insert(path.to_string(), handler);
     }
 
-    pub fn get(&self, path: &str) -> Option<PyObject> {
+    pub fn get(&self, path: &str) -> Option<Py<PyAny>> {
         self.handlers.read().get(path).cloned()
     }
 
@@ -439,7 +439,7 @@ pub fn websocket_key(headers: &hyper::HeaderMap) -> Option<String> {
 /// socket messages into the inbound channel, then invokes the registered Python
 /// handler with the channel-backed `WebSocket` handle. Async handlers are
 /// driven on the persistent asyncio loop. Returns once the handler completes.
-pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, peer: String) {
+pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: Py<PyAny>, peer: String) {
     use futures_util::{SinkExt, StreamExt};
     use hyper_util::rt::TokioIo;
     use tokio_tungstenite::tungstenite::protocol::Role;
@@ -529,7 +529,7 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, 
     );
 
     // Invoke the Python handler; drive coroutines on the persistent loop.
-    let call = Python::attach(|py| -> PyResult<PyObject> {
+    let call = Python::attach(|py| -> PyResult<Py<PyAny>> {
         let obj = handler.call1(py, (ws,))?;
         Ok(obj)
     });
@@ -541,7 +541,7 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, 
                     .and_then(|inspect| {
                         inspect.call_method1("iscoroutine", (obj.bind(py),))
                     })
-                    .and_then(|r| r.is_true())
+                    .and_then(|r| r.is_truthy())
                     .unwrap_or(false)
             });
             if is_coro {

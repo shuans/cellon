@@ -392,17 +392,17 @@ fn python_to_json_value<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Result
         return Ok(serde_json::Value::Null);
     }
 
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(serde_json::Value::Bool(b.is_true()));
     }
 
-    if let Ok(i) = obj.downcast::<PyInt>() {
+    if let Ok(i) = obj.cast::<PyInt>() {
         if let Ok(n) = i.extract::<i64>() {
             return Ok(serde_json::Value::Number(n.into()));
         }
     }
 
-    if let Ok(f) = obj.downcast::<PyFloat>() {
+    if let Ok(f) = obj.cast::<PyFloat>() {
         if let Ok(n) = f.extract::<f64>() {
             if let Some(num) = serde_json::Number::from_f64(n) {
                 return Ok(serde_json::Value::Number(num));
@@ -410,32 +410,32 @@ fn python_to_json_value<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Result
         }
     }
 
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         return Ok(serde_json::Value::String(s.to_string()));
     }
 
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         let mut arr = Vec::new();
         for item in list.iter() {
-            arr.push(python_to_json_value(py, item)?);
+            arr.push(python_to_json_value(py, &item)?);
         }
         return Ok(serde_json::Value::Array(arr));
     }
 
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (key, value) in dict.iter() {
             let key_str = key
                 .extract::<String>()
                 .map_err(|_| "Dict keys must be strings")?;
-            map.insert(key_str, python_to_json_value(py, value)?);
+            map.insert(key_str, python_to_json_value(py, &value)?);
         }
         return Ok(serde_json::Value::Object(map));
     }
 
     // Try to convert using Python's __dict__
     if let Ok(dict) = obj.getattr("__dict__") {
-        return python_to_json_value(py, dict);
+        return python_to_json_value(py, &dict);
     }
 
     Err(format!(

@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use redis::aio::ConnectionManager;
@@ -26,7 +27,7 @@ fn rt_err(msg: impl std::fmt::Display) -> PyErr {
 
 /// Convert a Python value into binary-safe Redis argument bytes.
 fn py_to_redis_bytes(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
-    if let Ok(b) = obj.downcast::<PyBytes>() {
+    if let Ok(b) = obj.cast::<PyBytes>() {
         return Ok(b.as_bytes().to_vec());
     }
     if let Ok(s) = obj.extract::<String>() {
@@ -45,9 +46,9 @@ fn py_to_redis_bytes(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
 }
 
 /// Convert a `redis::Value` into a native Python object.
-fn redis_value_to_py(py: Python<'_>, value: &redis::Value) -> PyObject {
+fn redis_value_to_py(py: Python<'_>, value: &redis::Value) -> PyResult<Py<PyAny>> {
     match value {
-        redis::Value::Nil => py.None(),
+        redis::Value::Nil => Ok(py.None()),
         redis::Value::Int(i) => i.into_py_any(py),
         // redis 0.27+/1.x renamed `Data` -> `BulkString`.
         redis::Value::BulkString(bytes) => match std::str::from_utf8(bytes) {
@@ -58,7 +59,7 @@ fn redis_value_to_py(py: Python<'_>, value: &redis::Value) -> PyObject {
         redis::Value::Array(items) => {
             let list = pyo3::types::PyList::empty(py);
             for item in items {
-                let _ = list.append(redis_value_to_py(py, item));
+                let _ = list.append(redis_value_to_py(py, item)?);
             }
             list.into_py_any(py)
         }
@@ -127,7 +128,7 @@ impl PyRedis {
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| rt_err(format!("Redis command failed: {e}")))?;
-            Ok(Python::attach(|py| redis_value_to_py(py, &value)))
+            Ok(Python::attach(|py| redis_value_to_py(py, &value))?)
         })
     }
 }
