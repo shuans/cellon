@@ -472,12 +472,3 @@ class TestComplexContextTypes:
         assert engine.render_string("{{ s }}", {"s": ""}) == ""
 
 
-# ===========================================================================
-# Version check
-# ===========================================================================
-
-
-def test_version_is_1_2_0():
-    import cello
-
-    assert cello.__version__ == "1.4.4"

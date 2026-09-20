@@ -7,6 +7,7 @@ Run with:
     ruff check python/ tests/
 """
 
+import importlib.metadata
 import threading
 import time
 
@@ -1063,7 +1064,7 @@ def test_version():
     """Test that version is 1.2.0."""
     import cello
 
-    assert cello.__version__ == "1.4.4"
+    assert cello.__version__ == importlib.metadata.version("cellon")
 
 
 def test_all_exports():
@@ -1859,13 +1860,6 @@ def test_v080_all_exports():
 # ---------------------------------------------------------------------------
 # v0.9.0 Version & Exports
 # ---------------------------------------------------------------------------
-
-
-def test_version_v090():
-    """Test that version is 1.2.0 (updated from 0.9.0)."""
-    import cello
-
-    assert cello.__version__ == "1.4.4"
 
 
 def test_v090_exports_in_all():
@@ -3671,13 +3665,6 @@ async def test_consumer_with_sqs_config():
 # ---------------------------------------------------------------------------
 # v0.10.0 Version & Export Tests
 # ---------------------------------------------------------------------------
-
-
-def test_version_v0100():
-    """Test that version is 1.2.0."""
-    import cello
-
-    assert cello.__version__ == "1.4.4"
 
 
 def test_v0100_exports_in_all():

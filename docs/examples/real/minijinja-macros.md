@@ -300,7 +300,7 @@ SAMPLE_REQUESTS = [
 
 SERVICES = [
     {"name": "api-gateway",  "description": "Public HTTP gateway",       "version": "2.1.0", "healthy": True},
-    {"name": "auth-service", "description": "JWT auth and sessions",     "version": "1.4.4", "healthy": True},
+    {"name": "auth-service", "description": "JWT auth and sessions",     "version": "1.4.2", "healthy": True},
     {"name": "worker",       "description": "Background task processor", "version": "1.1.0", "healthy": False},
 ]
 

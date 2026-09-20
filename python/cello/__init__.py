@@ -53,6 +53,7 @@ Example:
 
 """
 
+import importlib.metadata
 import json
 import sys as _sys
 
@@ -364,7 +365,13 @@ __all__ = [
     "validate_rate_limit_config",
     "validate_tls_config",
 ]
-__version__ = "1.4.4"
+# Single source of truth for the version is Cargo.toml's `package.version`.
+# maturin injects it into the built distribution; fall back to a sentinel only
+# when running from source without an installed/develop build.
+try:
+    __version__ = importlib.metadata.version("cellon")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0"
 
 
 class Blueprint:
@@ -1204,7 +1211,7 @@ class App:
         """
         self._app.invalidate_cache(tags)
 
-    def enable_openapi(self, title: str = "Cello API", version: str = "1.4.4"):
+    def enable_openapi(self, title: str = "Cello API", version: str = __version__):
         """
         Enable OpenAPI documentation endpoints.
 
@@ -1215,7 +1222,7 @@ class App:
 
         Args:
             title: API title (default: "Cello API")
-            version: API version (default: "1.4.4")
+            version: API version (default: the Cello version)
         """
         # Store for closure
         api_title = title
