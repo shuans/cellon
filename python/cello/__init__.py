@@ -1456,7 +1456,19 @@ class App:
     def _make_redis_aware(self, func):
         """Wrap a handler so the native Redis client and Database pool are
         injected onto the request (``request.redis`` / ``request.database``)
-        before dispatch."""
+        before dispatch.
+
+        PERF: when neither ``enable_redis()`` nor ``enable_database()`` has been
+        called there is nothing to inject, so the handler is returned unwrapped
+        and each request avoids an extra Python frame. As a consequence,
+        ``enable_redis()`` / ``enable_database()`` must be called **before**
+        registering routes for ``request.redis`` / ``request.database`` to be
+        available inside handlers (the documented, idiomatic order).
+        """
+        # Fast path: no data-layer client configured — nothing to inject.
+        if self._redis is None and self._database is None:
+            return func
+
         import inspect
         from functools import wraps
         app = self

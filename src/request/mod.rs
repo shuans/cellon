@@ -36,16 +36,16 @@ pub struct Request {
     pub path: String,
 
     /// Path parameters extracted from the route (e.g., {"id": "123"})
-    #[pyo3(get)]
-    pub params: HashMap<String, String>,
+    ///
+    /// PERF: shared via `Arc` (read-only after construction) so cloning a
+    /// request is O(1) instead of copying the map.
+    pub params: Arc<HashMap<String, String>>,
 
     /// Query string parameters
-    #[pyo3(get)]
-    pub query_params: HashMap<String, String>,
+    pub query_params: Arc<HashMap<String, String>>,
 
     /// Request headers
-    #[pyo3(get)]
-    pub headers: HashMap<String, String>,
+    pub headers: Arc<HashMap<String, String>>,
 
     /// Request body as bytes
     pub body: Vec<u8>,
@@ -97,9 +97,9 @@ impl Request {
         Request {
             method,
             path,
-            params: params.unwrap_or_default(),
-            query_params: query.unwrap_or_default(),
-            headers: headers_map,
+            params: Arc::new(params.unwrap_or_default()),
+            query_params: Arc::new(query.unwrap_or_default()),
+            headers: Arc::new(headers_map),
             body: body.unwrap_or_default(),
             content_type,
             context: HashMap::new(),
@@ -109,10 +109,28 @@ impl Request {
         }
     }
 
+    /// Get the path parameters dict.
+    #[getter]
+    pub fn params(&self) -> HashMap<String, String> {
+        (*self.params).clone()
+    }
+
+    /// Get the query parameters dict (alias of `query`).
+    #[getter]
+    pub fn query_params(&self) -> HashMap<String, String> {
+        (*self.query_params).clone()
+    }
+
+    /// Get the request headers dict.
+    #[getter]
+    pub fn headers(&self) -> HashMap<String, String> {
+        (*self.headers).clone()
+    }
+
     /// Get the query parameters dict.
     #[getter]
     pub fn query(&self) -> HashMap<String, String> {
-        self.query_params.clone()
+        (*self.query_params).clone()
     }
 
     /// Get the request body as a string (cached).
@@ -258,10 +276,24 @@ impl Request {
     /// Get a header by name (case-insensitive).
     #[pyo3(signature = (key, default=None))]
     pub fn get_header(&self, key: &str, default: Option<&str>) -> Option<String> {
-        let key_lower = key.to_lowercase();
+        // PERF: header names arrive lowercase from hyper and callers pass
+        // lowercase keys, so the common case is a single O(1) lookup. The old
+        // implementation lowercased *every* stored key on each lookup, which made
+        // this O(n) with n allocations — and it is called repeatedly per request
+        // (client_ip, user_agent, is_secure, accepts, middleware, …).
+        if let Some(value) = self.headers.get(key) {
+            return Some(value.clone());
+        }
+        if key.bytes().any(|b| b.is_ascii_uppercase()) {
+            if let Some(value) = self.headers.get(&key.to_ascii_lowercase()) {
+                return Some(value.clone());
+            }
+        }
+        // Fallback: maps built with non-canonical casing (e.g. Request(...)
+        // constructed from Python). Only reached on a miss.
         self.headers
             .iter()
-            .find(|(k, _)| k.to_lowercase() == key_lower)
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
             .map(|(_, v)| v.clone())
             .or_else(|| default.map(|s| s.to_string()))
     }
@@ -379,7 +411,8 @@ impl Request {
             .map(|arc| arc.clone_ref(py))
             .ok_or_else(|| {
                 pyo3::exceptions::PyAttributeError::new_err(
-                    "Redis not configured. Call app.enable_redis() before using request.redis.",
+                    "Redis not configured. Call app.enable_redis() before registering routes \
+                     to use request.redis.",
                 )
             })
     }
@@ -397,7 +430,8 @@ impl Request {
             .map(|arc| arc.clone_ref(py))
             .ok_or_else(|| {
                 pyo3::exceptions::PyAttributeError::new_err(
-                    "Database not configured. Call app.enable_database() before using request.database.",
+                    "Database not configured. Call app.enable_database() before registering \
+                     routes to use request.database.",
                 )
             })
     }
@@ -420,9 +454,9 @@ impl Request {
         Request {
             method: method.to_string(),
             path: path.to_string(),
-            params: HashMap::new(),
-            query_params: HashMap::new(),
-            headers: HashMap::new(),
+            params: Arc::new(HashMap::new()),
+            query_params: Arc::new(HashMap::new()),
+            headers: Arc::new(HashMap::new()),
             body: Vec::new(),
             content_type: None,
             context: HashMap::new(),
@@ -447,9 +481,9 @@ impl Request {
         Request {
             method,
             path,
-            params,
-            query_params: query,
-            headers,
+            params: Arc::new(params),
+            query_params: Arc::new(query),
+            headers: Arc::new(headers),
             body,
             content_type,
             context: HashMap::new(),
@@ -462,14 +496,15 @@ impl Request {
     /// Create a lightweight clone without body bytes or lazy cache.
     /// PERF: Used for after-middleware which only needs method, path, headers, and context.
     /// Avoids cloning the potentially large body Vec<u8> and the Arc<RwLock> cache structures.
+    /// The read-only maps are `Arc`-shared, so this is O(1) for them.
     #[inline]
     pub fn clone_without_body(&self) -> Self {
         Request {
             method: self.method.clone(),
             path: self.path.clone(),
-            params: self.params.clone(),
-            query_params: self.query_params.clone(),
-            headers: self.headers.clone(),
+            params: Arc::clone(&self.params),
+            query_params: Arc::clone(&self.query_params),
+            headers: Arc::clone(&self.headers),
             body: Vec::new(),
             content_type: self.content_type.clone(),
             context: self.context.clone(),
@@ -564,7 +599,7 @@ mod tests {
         query.insert("active".to_string(), "true".to_string());
 
         let mut request = Request::new("GET", "/items");
-        request.query_params = query;
+        request.query_params = std::sync::Arc::new(query);
 
         assert_eq!(request.get_query_param("page", None), Some("2".to_string()));
         assert_eq!(request.get_query_bool("active", None), Some(true));

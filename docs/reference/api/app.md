@@ -407,6 +407,8 @@ Enable database connection pooling.
 
 Configures a database backend. PostgreSQL uses the native Rust pool; SQLite and DuckDB use the async file-database adapter. All expose fetch/fetchrow/fetchval/execute and transactions.
 
+> **Order matters.** Call `enable_database()` **before** registering routes so `request.database` is available inside handlers. Routes registered before this call are not wired for injection (keeping the request path free of an extra Python frame); `app.database` always works.
+
 ```python
 from cello import App, DatabaseConfig
 
@@ -431,6 +433,8 @@ Enable Redis connection pooling.
 > *Since v0.8.0*
 
 Configures an async Redis client with connection pooling, supporting standard and cluster modes.
+
+> **Order matters.** Call `enable_redis()` **before** registering routes so `request.redis` is available inside handlers. Routes registered before this call are not wired for injection (keeping the request path free of an extra Python frame); `app.redis` always works.
 
 ```python
 from cello import App, RedisConfig

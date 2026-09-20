@@ -4,7 +4,7 @@
 //! with serde_json as fallback.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyList, PyLong, PyString, PyTuple};
 
 /// Parse JSON string to serde_json::Value.
 /// Uses SIMD acceleration on x86_64 and aarch64 (NEON), falls back to serde_json
@@ -63,29 +63,44 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
         return Ok(serde_json::Value::Null);
     }
 
+    // PERF: Dispatch on the Python type with `downcast` (a cheap isinstance check)
+    // rather than probing each scalar with `extract::<T>()`. A failed `extract`
+    // builds and clears a Python exception, so the old try-each-type chain paid
+    // that cost repeatedly per value — worst for strings, which failed the
+    // bool/int/float probes first.
+
     // Handle bool (must come before int check since bool is subclass of int in Python)
-    if let Ok(b) = obj.extract::<bool>() {
-        return Ok(serde_json::Value::Bool(b));
+    if let Ok(b) = obj.downcast::<PyBool>() {
+        return Ok(serde_json::Value::Bool(b.is_true()));
     }
 
     // Handle int. Try i64 first, then u64 for large unsigned values (e.g. 64-bit IDs
     // and values in (i64::MAX, u64::MAX]) so they are not silently downgraded to f64
     // and corrupted. Integers beyond u64 still fall through to the float path.
-    if let Ok(i) = obj.extract::<i64>() {
-        return Ok(serde_json::Value::Number(i.into()));
-    }
-    if let Ok(u) = obj.extract::<u64>() {
-        return Ok(serde_json::Value::Number(u.into()));
+    if let Ok(long) = obj.downcast::<PyLong>() {
+        if let Ok(i) = long.extract::<i64>() {
+            return Ok(serde_json::Value::Number(i.into()));
+        }
+        if let Ok(u) = long.extract::<u64>() {
+            return Ok(serde_json::Value::Number(u.into()));
+        }
+        if let Ok(f) = long.extract::<f64>() {
+            return Ok(serde_json::json!(f));
+        }
     }
 
     // Handle float
-    if let Ok(f) = obj.extract::<f64>() {
-        return Ok(serde_json::json!(f));
+    if let Ok(float) = obj.downcast::<PyFloat>() {
+        if let Ok(f) = float.extract::<f64>() {
+            return Ok(serde_json::json!(f));
+        }
     }
 
     // Handle string
-    if let Ok(s) = obj.extract::<String>() {
-        return Ok(serde_json::Value::String(s));
+    if let Ok(s) = obj.downcast::<PyString>() {
+        if let Ok(s) = s.to_str() {
+            return Ok(serde_json::Value::String(s.to_owned()));
+        }
     }
 
     // Handle list
@@ -164,6 +179,21 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
         return Ok(serde_json::Value::Object(response_obj));
     }
 
+    // Fallback for objects that are not exact builtins but still convert through
+    // the numeric/str protocols (e.g. numpy scalars, Decimal, IntEnum).
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(serde_json::Value::Number(i.into()));
+    }
+    if let Ok(u) = obj.extract::<u64>() {
+        return Ok(serde_json::Value::Number(u.into()));
+    }
+    if let Ok(f) = obj.extract::<f64>() {
+        return Ok(serde_json::json!(f));
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(serde_json::Value::String(s));
+    }
+
     Err(format!("Cannot convert Python object to JSON: {obj:?}"))
 }
 
@@ -172,22 +202,17 @@ pub fn python_to_json(py: Python<'_>, obj: &PyAny) -> Result<serde_json::Value, 
 /// Returns Ok(None) for Response objects (caller must fall back to python_to_json).
 #[inline]
 pub fn python_to_json_bytes_direct(py: Python<'_>, obj: &PyAny) -> Result<Option<Vec<u8>>, String> {
-    // PERF: Check for dict/list FIRST (common case) before the expensive class name check.
-    // Most handlers return dicts, so fast-path that.
-    if obj.downcast::<PyDict>().is_ok() || obj.downcast::<PyList>().is_ok() {
+    // PERF: Type-check (a cheap isinstance) instead of probing with
+    // `extract::<T>()`, which allocates and clears a Python exception on every
+    // failed attempt. dict/list first (most handlers return a dict), then scalars.
+    let is_container = obj.downcast::<PyDict>().is_ok() || obj.downcast::<PyList>().is_ok();
+    let is_scalar = obj.is_none()
+        || obj.downcast::<PyBool>().is_ok()
+        || obj.downcast::<PyLong>().is_ok()
+        || obj.downcast::<PyFloat>().is_ok()
+        || obj.downcast::<PyString>().is_ok();
+    if is_container || is_scalar {
         let mut buf = Vec::with_capacity(128);
-        write_json_value(py, obj, &mut buf)?;
-        return Ok(Some(buf));
-    }
-
-    // Check primitives
-    if obj.is_none()
-        || obj.extract::<bool>().is_ok()
-        || obj.extract::<i64>().is_ok()
-        || obj.extract::<f64>().is_ok()
-        || obj.extract::<String>().is_ok()
-    {
-        let mut buf = Vec::with_capacity(64);
         write_json_value(py, obj, &mut buf)?;
         return Ok(Some(buf));
     }
@@ -206,38 +231,48 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
         return Ok(());
     }
 
+    // PERF: Dispatch on the Python type with `downcast` (cheap isinstance) rather
+    // than probing each scalar with `extract::<T>()`, which builds and clears a
+    // Python exception on every failed probe.
+
     // Handle bool (must come before int check since bool is subclass of int in Python)
-    if let Ok(b) = obj.extract::<bool>() {
-        buf.extend_from_slice(if b { b"true" } else { b"false" });
+    if let Ok(b) = obj.downcast::<PyBool>() {
+        buf.extend_from_slice(if b.is_true() { b"true" } else { b"false" });
         return Ok(());
     }
 
     // Handle int. Try i64, then u64 for large unsigned values, so 64-bit IDs and
     // values in (i64::MAX, u64::MAX] are written exactly instead of being coerced to
     // an imprecise float. Integers beyond u64 still fall through to the float path.
-    if let Ok(i) = obj.extract::<i64>() {
-        write!(buf, "{i}").map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    if let Ok(u) = obj.extract::<u64>() {
-        write!(buf, "{u}").map_err(|e| e.to_string())?;
-        return Ok(());
+    if let Ok(long) = obj.downcast::<PyLong>() {
+        if let Ok(i) = long.extract::<i64>() {
+            write!(buf, "{i}").map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        if let Ok(u) = long.extract::<u64>() {
+            write!(buf, "{u}").map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        if let Ok(f) = long.extract::<f64>() {
+            write_json_float(f, buf);
+            return Ok(());
+        }
     }
 
     // Handle float
-    if let Ok(f) = obj.extract::<f64>() {
-        if f.is_finite() {
-            write!(buf, "{f}").map_err(|e| e.to_string())?;
-        } else {
-            buf.extend_from_slice(b"null");
+    if let Ok(float) = obj.downcast::<PyFloat>() {
+        if let Ok(f) = float.extract::<f64>() {
+            write_json_float(f, buf);
+            return Ok(());
         }
-        return Ok(());
     }
 
     // Handle string - need to JSON-escape
-    if let Ok(s) = obj.extract::<String>() {
-        write_json_string(&s, buf);
-        return Ok(());
+    if let Ok(s) = obj.downcast::<PyString>() {
+        if let Ok(s) = s.to_str() {
+            write_json_string(s, buf);
+            return Ok(());
+        }
     }
 
     // Handle list
@@ -286,37 +321,75 @@ fn write_json_value(py: Python<'_>, obj: &PyAny, buf: &mut Vec<u8>) -> Result<()
         return Ok(());
     }
 
+    // Fallback for objects that are not exact builtins but still convert through
+    // the numeric/str protocols (e.g. numpy scalars, Decimal, IntEnum).
+    if let Ok(i) = obj.extract::<i64>() {
+        write!(buf, "{i}").map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    if let Ok(u) = obj.extract::<u64>() {
+        write!(buf, "{u}").map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    if let Ok(f) = obj.extract::<f64>() {
+        write_json_float(f, buf);
+        return Ok(());
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        write_json_string(&s, buf);
+        return Ok(());
+    }
+
     Err(format!("Cannot convert Python object to JSON: {obj:?}"))
+}
+
+/// Write a JSON number for a float, mapping non-finite values to `null` (which
+/// is what `serde_json` does and what the previous inline code did).
+#[inline]
+fn write_json_float(f: f64, buf: &mut Vec<u8>) {
+    use std::io::Write;
+    if f.is_finite() {
+        let _ = write!(buf, "{f}");
+    } else {
+        buf.extend_from_slice(b"null");
+    }
 }
 
 /// Write a JSON-escaped string to the buffer.
 #[inline]
 fn write_json_string(s: &str, buf: &mut Vec<u8>) {
     buf.push(b'"');
-    for byte in s.bytes() {
-        match byte {
-            b'"' => buf.extend_from_slice(b"\\\""),
-            b'\\' => buf.extend_from_slice(b"\\\\"),
-            b'\n' => buf.extend_from_slice(b"\\n"),
-            b'\r' => buf.extend_from_slice(b"\\r"),
-            b'\t' => buf.extend_from_slice(b"\\t"),
-            b if b < 0x20 => {
-                // Control characters: \u00XX
-                buf.extend_from_slice(b"\\u00");
-                let high = b >> 4;
-                let low = b & 0x0f;
-                buf.push(if high < 10 {
-                    b'0' + high
-                } else {
-                    b'a' + high - 10
-                });
-                buf.push(if low < 10 {
-                    b'0' + low
-                } else {
-                    b'a' + low - 10
-                });
+    let bytes = s.as_bytes();
+    // PERF: most strings contain nothing that needs escaping — copy them in one
+    // shot rather than byte-by-byte.
+    if !bytes.iter().any(|&b| b < 0x20 || b == b'"' || b == b'\\') {
+        buf.extend_from_slice(bytes);
+    } else {
+        for &byte in bytes {
+            match byte {
+                b'"' => buf.extend_from_slice(b"\\\""),
+                b'\\' => buf.extend_from_slice(b"\\\\"),
+                b'\n' => buf.extend_from_slice(b"\\n"),
+                b'\r' => buf.extend_from_slice(b"\\r"),
+                b'\t' => buf.extend_from_slice(b"\\t"),
+                b if b < 0x20 => {
+                    // Control characters: \u00XX
+                    buf.extend_from_slice(b"\\u00");
+                    let high = b >> 4;
+                    let low = b & 0x0f;
+                    buf.push(if high < 10 {
+                        b'0' + high
+                    } else {
+                        b'a' + high - 10
+                    });
+                    buf.push(if low < 10 {
+                        b'0' + low
+                    } else {
+                        b'a' + low - 10
+                    });
+                }
+                _ => buf.push(byte),
             }
-            _ => buf.push(byte),
         }
     }
     buf.push(b'"');

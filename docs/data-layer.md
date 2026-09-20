@@ -30,6 +30,13 @@ After `enable_database()` / `enable_redis()`:
 | In `on_event("startup"/"shutdown")` | `app.database` | `app.redis` |
 | In a route handler | `request.database` (alias `request.db`) | `request.redis` |
 
+> **Order matters.** Call `enable_database()` / `enable_redis()` **before**
+> registering routes. `request.database` / `request.redis` are wired onto the
+> request at route-registration time; a route registered *before* the client is
+> enabled is left unwrapped (to keep the request path free of an extra Python
+> frame) and will raise `AttributeError` when it touches `request.database` /
+> `request.redis`. `app.database` / `app.redis` are unaffected and always work.
+
 The pools are created lazily — the first query opens the first connection — and
 live on Cello's persistent event loop, so they survive across requests.
 

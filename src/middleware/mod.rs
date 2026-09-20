@@ -211,7 +211,11 @@ impl MiddlewareError {
 /// skip `/healthz`, allowing an auth bypass.
 #[inline]
 pub(super) fn path_matches_skip(path: &str, pattern: &str) -> bool {
-    path == pattern || path.starts_with(&format!("{}/", pattern))
+    // PERF: avoid the `format!("{}/", pattern)` allocation that ran for every
+    // skip-path of every middleware on every request. Equivalent to
+    // `path == pattern || path.starts_with(pattern + "/")`.
+    path == pattern
+        || (path.starts_with(pattern) && path.as_bytes().get(pattern.len()) == Some(&b'/'))
 }
 
 impl std::fmt::Display for MiddlewareError {

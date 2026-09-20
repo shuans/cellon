@@ -217,6 +217,9 @@ app.enable_redis(RedisConfig(
     pool_size=10
 ))
 
+# NOTE: enable_database()/enable_redis() must run before routes are registered,
+# otherwise request.database / request.redis are not injected into those routes.
+
 @app.post("/transfer")
 @transactional
 async def transfer(request):

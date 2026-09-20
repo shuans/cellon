@@ -14,6 +14,8 @@ use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
 
+use bytes::Bytes;
+
 use crate::json::python_to_json;
 
 pub use streaming::{ChunkedBody, FileBody, StreamItem, StreamingResponse};
@@ -56,7 +58,10 @@ pub struct Response {
     pub headers: HashMap<String, String>,
 
     /// Response body
-    body: Vec<u8>,
+    ///
+    /// PERF: held as `Bytes` so the Hyper response can share the buffer by
+    /// refcount instead of copying it (`Bytes::clone` is an atomic increment).
+    body: Bytes,
 
     /// Content type
     content_type: String,
@@ -83,7 +88,9 @@ impl Response {
         Response {
             status: status.unwrap_or(200),
             headers: h,
-            body: body.map(|s| s.as_bytes().to_vec()).unwrap_or_default(),
+            body: body
+                .map(|s| Bytes::copy_from_slice(s.as_bytes()))
+                .unwrap_or_default(),
             content_type: ct,
             body_type: if body.is_some() {
                 ResponseBody::Bytes(Vec::new())
@@ -99,8 +106,10 @@ impl Response {
     pub fn json(py: Python<'_>, data: &PyAny, status: Option<u16>) -> PyResult<Self> {
         let json_value =
             python_to_json(py, data).map_err(pyo3::exceptions::PyValueError::new_err)?;
-        let body = serde_json::to_vec(&json_value)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let body = Bytes::from(
+            serde_json::to_vec(&json_value)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+        );
 
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -127,7 +136,7 @@ impl Response {
         Response {
             status: status.unwrap_or(200),
             headers,
-            body: content.as_bytes().to_vec(),
+            body: Bytes::copy_from_slice(content.as_bytes()),
             content_type: "text/plain".to_string(),
             body_type: ResponseBody::Bytes(Vec::new()),
         }
@@ -146,7 +155,7 @@ impl Response {
         Response {
             status: status.unwrap_or(200),
             headers,
-            body: content.as_bytes().to_vec(),
+            body: Bytes::copy_from_slice(content.as_bytes()),
             content_type: "text/html".to_string(),
             body_type: ResponseBody::Bytes(Vec::new()),
         }
@@ -165,7 +174,7 @@ impl Response {
         Response {
             status: status.unwrap_or(200),
             headers,
-            body: data,
+            body: Bytes::from(data),
             content_type: ct,
             body_type: ResponseBody::Bytes(Vec::new()),
         }
@@ -202,7 +211,7 @@ impl Response {
         Ok(Response {
             status: 200,
             headers,
-            body: data,
+            body: Bytes::from(data),
             content_type: ct,
             body_type: ResponseBody::Bytes(Vec::new()),
         })
@@ -230,7 +239,7 @@ impl Response {
         Ok(Response {
             status: 200,
             headers,
-            body: Vec::new(),
+            body: Bytes::new(),
             content_type: ct,
             body_type: ResponseBody::File(path.to_string()),
         })
@@ -275,7 +284,7 @@ impl Response {
         Ok(Response {
             status: 206,
             headers,
-            body: Vec::new(),
+            body: Bytes::new(),
             content_type: ct,
             body_type: ResponseBody::File(path.to_string()),
         })
@@ -292,7 +301,7 @@ impl Response {
         Response {
             status,
             headers,
-            body: Vec::new(),
+            body: Bytes::new(),
             content_type: "text/plain".to_string(),
             body_type: ResponseBody::Empty,
         }
@@ -304,7 +313,7 @@ impl Response {
         Response {
             status: 204,
             headers: HashMap::new(),
-            body: Vec::new(),
+            body: Bytes::new(),
             content_type: "text/plain".to_string(),
             body_type: ResponseBody::Empty,
         }
@@ -349,7 +358,7 @@ impl Response {
         Ok(Response {
             status: status.unwrap_or(200),
             headers,
-            body: xml_content.into_bytes(),
+            body: Bytes::from(xml_content.into_bytes()),
             content_type: "application/xml".to_string(),
             body_type: ResponseBody::Bytes(Vec::new()),
         })
@@ -369,7 +378,7 @@ impl Response {
 
     /// Get the response body as bytes.
     pub fn body(&self) -> Vec<u8> {
-        self.body.clone()
+        self.body.to_vec()
     }
 
     /// Get the content type.
@@ -391,7 +400,7 @@ impl Response {
         Response {
             status,
             headers: HashMap::new(),
-            body: Vec::new(),
+            body: Bytes::new(),
             content_type: "text/plain".to_string(),
             body_type: ResponseBody::Empty,
         }
@@ -400,13 +409,22 @@ impl Response {
     /// Get the body bytes (internal use).
     #[inline]
     pub fn body_bytes(&self) -> &[u8] {
-        &self.body
+        self.body.as_ref()
+    }
+
+    /// Get the body as a reference-counted buffer.
+    ///
+    /// PERF: `Bytes::clone` is an atomic increment, so the Hyper response can
+    /// share the body instead of copying it.
+    #[inline]
+    pub fn body_buffer(&self) -> Bytes {
+        self.body.clone()
     }
 
     /// Set the body (internal use).
     #[inline]
     pub fn set_body(&mut self, body: Vec<u8>) {
-        self.body = body;
+        self.body = Bytes::from(body);
         self.body_type = ResponseBody::Bytes(Vec::new());
     }
 
@@ -451,7 +469,7 @@ impl Response {
     /// Create a response from JSON value (internal use).
     #[inline]
     pub fn from_json_value(value: serde_json::Value, status: u16) -> Self {
-        let body = serde_json::to_vec(&value).unwrap_or_default();
+        let body = Bytes::from(serde_json::to_vec(&value).unwrap_or_default());
         // PERF: Pre-allocate with known capacity (1 Content-Type header)
         let mut headers = HashMap::with_capacity(1);
         headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -474,7 +492,7 @@ impl Response {
         Response {
             status,
             headers,
-            body,
+            body: Bytes::from(body),
             content_type: "application/json".to_string(),
             body_type: ResponseBody::Bytes(Vec::new()),
         }

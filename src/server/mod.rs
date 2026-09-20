@@ -1060,19 +1060,11 @@ where
     let uri = req.uri().clone();
     let path = uri.path();
 
-    // Lightweight request for the error-handler chain (method/path context only;
-    // body/params/query are filled in later). Shared by every
-    // `build_hyper_response` call so error handlers get consistent context.
-    let error_request = Request::from_http(
-        method_str.to_owned(),
-        path.to_owned(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        Vec::new(),
-    );
+    // PERF: `build_resp` only needs method/path so that error handlers on an
+    // early return (404/413/408/…) get context. `build_hyper_response` builds
+    // that lightweight context lazily, so successful requests never allocate it.
     let build_resp = |response: &Response| {
-        build_hyper_response(response, metrics, error_handlers, Some(&error_request))
+        build_hyper_response(response, metrics, error_handlers, method_str, path, None)
     };
 
     // PERF: Route match FIRST - fail fast on 404 before any allocation
@@ -1125,8 +1117,21 @@ where
         // application/x-www-form-urlencoded: '+' denotes a space (for BOTH keys and
         // values) and the rest is percent-encoded. Previously only values had '+'
         // decoded, so a key like `a+b` was left as `a+b` instead of `a b`.
+        //
+        // PERF: skip the `replace`/decode work entirely when the component has
+        // nothing to decode (the common case for simple query strings).
         let decode = |raw: &str| -> String {
-            urlencoding::decode(&raw.replace('+', " "))
+            if !raw.as_bytes().iter().any(|&b| b == b'+' || b == b'%') {
+                return raw.to_string();
+            }
+            let plus_decoded;
+            let to_decode = if raw.contains('+') {
+                plus_decoded = raw.replace('+', " ");
+                plus_decoded.as_str()
+            } else {
+                raw
+            };
+            urlencoding::decode(to_decode)
                 .unwrap_or_default()
                 .into_owned()
         };
@@ -1291,11 +1296,20 @@ where
     }
 
     // Handle route
-    let error_request = request.clone_without_body();
     let has_after_middleware = !middleware.is_empty() || !middleware.is_async_empty();
 
     // PERF: Create lightweight request for after-middleware (no body copy)
     let after_request = if has_after_middleware {
+        Some(request.clone_without_body())
+    } else {
+        None
+    };
+
+    // PERF: The error-handler chain only reads the request context when a handler
+    // is actually registered. Snapshotting it unconditionally copied every header
+    // on every request; now it is skipped entirely when no handlers exist (the
+    // default) and reused from `after_request` otherwise.
+    let error_request = if !has_after_middleware && error_handlers.has_handlers() {
         Some(request.clone_without_body())
     } else {
         None
@@ -1344,9 +1358,6 @@ where
         }
     }
 
-    // Restore request for after-middleware (the original was moved into the handler)
-    let request = after_request.unwrap_or_default();
-
     let mut response = match result {
         Ok(handler_result) => match handler_result {
             // PERF: Fast path - pre-serialized JSON bytes, no serde_json::Value involved
@@ -1391,13 +1402,27 @@ where
                 HandlerError::Python(info) => AppError::PythonException(info),
                 HandlerError::Message(message) => AppError::Internal(message),
             };
+            // Prefer the after-middleware snapshot for context; fall back to the
+            // error snapshot (used when there is no after-middleware) or an empty
+            // request when no error handlers are registered — then it is unused.
+            let owned_ctx;
+            let ctx: &Request = match after_request.as_ref().or(error_request.as_ref()) {
+                Some(r) => r,
+                None => {
+                    owned_ctx = Request::default();
+                    &owned_ctx
+                }
+            };
             // Already dispatched through the error-handler chain; mark it so
             // `build_hyper_response` does not dispatch it a second time.
-            let mut handled = error_handlers.handle(&app_error, &error_request, None);
+            let mut handled = error_handlers.handle(&app_error, ctx, None);
             handled.set_header(ERROR_HANDLED_HEADER, "1");
             handled
         }
     };
+
+    // Restore request for after-middleware (the original was moved into the handler)
+    let request = after_request.unwrap_or_default();
 
     // PERF: Skip after middleware if none registered
     if !middleware.is_async_empty() {
@@ -1472,7 +1497,7 @@ fn status_to_app_error(status: u16, message: &str) -> AppError {
 }
 
 /// Build a Hyper response from our Response type.
-/// PERF: Avoid unnecessary copies - use Bytes::copy_from_slice directly.
+/// PERF: the body is shared as `Bytes` (refcount bump), not copied.
 #[inline]
 fn build_hyper_response_inner(
     response: &Response,
@@ -1490,10 +1515,11 @@ fn build_hyper_response_inner(
         builder = builder.header(key.as_str(), value.as_str());
     }
 
-    // PERF: Create Bytes directly from slice - avoids intermediate Vec allocation
-    let body_slice = response.body_bytes();
-    metrics.add_bytes_sent(body_slice.len() as u64);
-    let body = Full::new(Bytes::copy_from_slice(body_slice));
+    // PERF: `body_buffer()` is a cheap `Bytes` clone (atomic increment) — the
+    // response body is shared with Hyper instead of copied.
+    let body = response.body_buffer();
+    metrics.add_bytes_sent(body.len() as u64);
+    let body = Full::new(body);
 
     Ok(builder.body(body).unwrap_or_else(|_| {
         HyperResponse::new(Full::new(Bytes::from_static(b"Internal Server Error")))
@@ -1514,16 +1540,32 @@ fn build_hyper_response(
     response: &Response,
     metrics: &Arc<ServerMetrics>,
     error_handlers: &Arc<ErrorHandlerRegistry>,
+    method: &str,
+    path: &str,
     request: Option<&Request>,
 ) -> Result<HyperResponse<Full<Bytes>>, Infallible> {
     if response.status >= 400 && !response.headers.contains_key(ERROR_HANDLED_HEADER) {
         let message = String::from_utf8_lossy(response.body_bytes());
         let error = status_to_app_error(response.status, &message);
         if error_handlers.has_handler_for(&error) {
-            let err_request = request
-                .cloned()
-                .unwrap_or_else(|| Request::from_http(String::new(), String::new(), HashMap::new(), HashMap::new(), HashMap::new(), Vec::new()));
-            let handled = error_handlers.handle(&error, &err_request, None);
+            // PERF: build the lightweight method/path context only on the rare
+            // path that actually dispatches to a registered error handler.
+            let owned_ctx;
+            let err_request = match request {
+                Some(r) => r,
+                None => {
+                    owned_ctx = Request::from_http(
+                        method.to_owned(),
+                        path.to_owned(),
+                        HashMap::new(),
+                        HashMap::new(),
+                        HashMap::new(),
+                        Vec::new(),
+                    );
+                    &owned_ctx
+                }
+            };
+            let handled = error_handlers.handle(&error, err_request, None);
             return build_hyper_response_inner(&handled, metrics);
         }
     }

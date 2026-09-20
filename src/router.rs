@@ -14,11 +14,34 @@ pub struct RouteMatch {
     pub params: HashMap<String, String>,
 }
 
+/// Standard HTTP methods, each with a dedicated router slot. Indexing by slot
+/// avoids hashing the method string on every request.
+const STANDARD_METHODS: usize = 9;
+
+/// Map a standard (uppercase) HTTP method to its slot index.
+#[inline]
+fn standard_method_index(method: &str) -> Option<usize> {
+    Some(match method {
+        "GET" => 0,
+        "POST" => 1,
+        "PUT" => 2,
+        "DELETE" => 3,
+        "PATCH" => 4,
+        "OPTIONS" => 5,
+        "HEAD" => 6,
+        "TRACE" => 7,
+        "CONNECT" => 8,
+        _ => return None,
+    })
+}
+
 /// HTTP method-based router using radix trees.
 #[derive(Clone)]
 pub struct Router {
-    /// Separate router for each HTTP method
-    routes: Arc<RwLock<HashMap<String, MatchitRouter<usize>>>>,
+    /// One radix tree per standard method (`None` until a route is added).
+    routes: Arc<RwLock<[Option<MatchitRouter<usize>>; STANDARD_METHODS]>>,
+    /// Non-standard methods, keyed by uppercased method name.
+    other: Arc<RwLock<HashMap<String, MatchitRouter<usize>>>>,
 }
 
 impl Default for Router {
@@ -31,7 +54,8 @@ impl Router {
     /// Create a new empty router.
     pub fn new() -> Self {
         Router {
-            routes: Arc::new(RwLock::new(HashMap::new())),
+            routes: Arc::new(RwLock::new(std::array::from_fn(|_| None))),
+            other: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -53,6 +77,21 @@ impl Router {
         result
     }
 
+    /// Extract a `RouteMatch` from a matched radix-tree node.
+    #[inline]
+    fn extract_match(router: &MatchitRouter<usize>, path: &str) -> Option<RouteMatch> {
+        let matched = router.at(path).ok()?;
+        // PERF: Pre-allocate HashMap with known param count
+        let mut params: HashMap<String, String> = HashMap::with_capacity(matched.params.len());
+        for (k, v) in matched.params.iter() {
+            params.insert(k.to_owned(), v.to_owned());
+        }
+        Some(RouteMatch {
+            handler_id: *matched.value,
+            params,
+        })
+    }
+
     /// Add a route for a specific HTTP method.
     ///
     /// # Arguments
@@ -60,15 +99,23 @@ impl Router {
     /// * `path` - URL path pattern with optional parameters (e.g., "/users/{id}")
     /// * `handler_id` - ID of the registered handler
     pub fn add_route(&mut self, method: &str, path: &str, handler_id: usize) -> Result<(), String> {
-        let mut routes = self.routes.write();
-        let method_router = routes.entry(method.to_uppercase()).or_default();
-
+        let method = method.to_uppercase();
         // Convert {param} to :param for matchit compatibility
         let converted_path = Self::convert_path_params(path);
 
-        method_router
-            .insert(&converted_path, handler_id)
-            .map_err(|e| format!("Failed to add route: {e}"))
+        if let Some(index) = standard_method_index(&method) {
+            let mut routes = self.routes.write();
+            let router = routes[index].get_or_insert_with(MatchitRouter::new);
+            router
+                .insert(&converted_path, handler_id)
+                .map_err(|e| format!("Failed to add route: {e}"))
+        } else {
+            let mut other = self.other.write();
+            let router = other.entry(method).or_default();
+            router
+                .insert(&converted_path, handler_id)
+                .map_err(|e| format!("Failed to add route: {e}"))
+        }
     }
 
     /// Match a request path against registered routes.
@@ -82,29 +129,27 @@ impl Router {
     /// * `None` if no route matches
     #[inline]
     pub fn match_route(&self, method: &str, path: &str) -> Option<RouteMatch> {
-        let routes = self.routes.read();
-        // PERF: Try direct lookup first (HTTP methods from hyper are already uppercase),
-        // only allocate for to_uppercase() if direct lookup fails
-        let method_router = routes
-            .get(method)
-            .or_else(|| routes.get(&method.to_uppercase()))?;
-
-        match method_router.at(path) {
-            Ok(matched) => {
-                // PERF: Pre-allocate HashMap with known param count
-                let mut params: HashMap<String, String> =
-                    HashMap::with_capacity(matched.params.len());
-                for (k, v) in matched.params.iter() {
-                    params.insert(k.to_owned(), v.to_owned());
-                }
-
-                Some(RouteMatch {
-                    handler_id: *matched.value,
-                    params,
-                })
-            }
-            Err(_) => None,
+        // PERF: hyper supplies uppercase methods, so the common case is a direct
+        // slot index — no method-string hashing or allocation.
+        if let Some(index) = standard_method_index(method) {
+            let routes = self.routes.read();
+            return routes[index]
+                .as_ref()
+                .and_then(|router| Self::extract_match(router, path));
         }
+
+        // Non-standard or lowercase method: normalize (off the hot path).
+        let method = method.to_uppercase();
+        if let Some(index) = standard_method_index(&method) {
+            let routes = self.routes.read();
+            return routes[index]
+                .as_ref()
+                .and_then(|router| Self::extract_match(router, path));
+        }
+        let other = self.other.read();
+        other
+            .get(&method)
+            .and_then(|router| Self::extract_match(router, path))
     }
 }
 
