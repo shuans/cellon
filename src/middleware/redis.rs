@@ -535,7 +535,7 @@ impl RedisClient for MockRedisClient {
         let map = data
             .entry(key.to_string())
             .or_insert_with(|| RedisValue::Map(HashMap::new()));
-        if let RedisValue::Map(ref mut m) = map {
+        if let RedisValue::Map(m) = map {
             m.insert(field.to_string(), value);
         }
         Ok(())
@@ -555,7 +555,7 @@ impl RedisClient for MockRedisClient {
         let list = data
             .entry(key.to_string())
             .or_insert_with(|| RedisValue::Array(Vec::new()));
-        if let RedisValue::Array(ref mut arr) = list {
+        if let RedisValue::Array(arr) = list {
             arr.insert(0, value);
             Ok(arr.len() as i64)
         } else {
@@ -568,7 +568,7 @@ impl RedisClient for MockRedisClient {
         let list = data
             .entry(key.to_string())
             .or_insert_with(|| RedisValue::Array(Vec::new()));
-        if let RedisValue::Array(ref mut arr) = list {
+        if let RedisValue::Array(arr) = list {
             arr.push(value);
             Ok(arr.len() as i64)
         } else {
@@ -578,7 +578,7 @@ impl RedisClient for MockRedisClient {
 
     fn lpop(&self, key: &str) -> Result<Option<RedisValue>, RedisError> {
         let mut data = self.data.write();
-        if let Some(RedisValue::Array(ref mut arr)) = data.get_mut(key) {
+        if let Some(RedisValue::Array(arr)) = data.get_mut(key) {
             if arr.is_empty() {
                 Ok(None)
             } else {
@@ -618,7 +618,7 @@ impl RedisClient for MockRedisClient {
         let set = data
             .entry(key.to_string())
             .or_insert_with(|| RedisValue::Array(Vec::new()));
-        if let RedisValue::Array(ref mut arr) = set {
+        if let RedisValue::Array(arr) = set {
             // Simple dedup check for strings
             let exists = arr.iter().any(|v| {
                 if let (RedisValue::String(a), RedisValue::String(b)) = (v, &member) {

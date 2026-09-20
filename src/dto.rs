@@ -291,7 +291,7 @@ where
     /// Convert from JSON with validation.
     pub fn from_json(json: serde_json::Value, config: &DTOConfig) -> Result<T, DTOError> {
         // Check for read-only fields in input
-        if let serde_json::Value::Object(ref map) = &json {
+        if let serde_json::Value::Object(map) = &json {
             for key in map.keys() {
                 if config.is_read_only(key) {
                     return Err(DTOError::ReadOnlyField(key.clone()));
