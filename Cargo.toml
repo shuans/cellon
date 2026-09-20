@@ -44,7 +44,7 @@ socket2 = { version = "0.6", features = ["all"] }
 # WebSocket support
 tokio-tungstenite = "0.30"
 futures-util = "0.3"
-sha1 = "0.10"  # RFC 6455 Sec-WebSocket-Accept handshake
+sha1 = "0.11"  # RFC 6455 Sec-WebSocket-Accept handshake
 
 # Routing
 matchit = "0.9"
@@ -117,8 +117,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 uuid = { version = "1", features = ["v4"] }
 rand = "0.10"
 base64 = "0.23"
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 hex = "0.4"
 crc32fast = "1"
 subtle = "2"  # Constant-time comparison for timing attack prevention
@@ -150,7 +150,7 @@ tracing-opentelemetry = "0.33"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Database Connection Pooling (native Postgres pool — first-class since v1.3.0)
-deadpool = "0.12"
+deadpool = "0.13"
 deadpool-postgres = "0.14"
 tokio-postgres = { version = "0.7", features = [
     "with-chrono-0_4",

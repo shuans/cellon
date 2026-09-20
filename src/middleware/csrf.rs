@@ -6,7 +6,7 @@
 //! - Same-site cookie protection
 //! - Origin/Referer validation
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rand::RngExt;
 use sha2::Sha256;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
