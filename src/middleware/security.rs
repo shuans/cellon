@@ -169,8 +169,8 @@ impl ContentSecurityPolicy {
 
     /// Generate nonce value.
     pub fn generate_nonce() -> String {
-        let mut rng = rand::thread_rng();
-        let bytes: [u8; 16] = rng.gen();
+        let mut rng = rand::rng();
+        let bytes: [u8; 16] = rng.random();
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes)
     }
 

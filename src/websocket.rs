@@ -458,10 +458,11 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, 
     let writer = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
             let wire = match msg.msg_type.as_str() {
-                "text" => msg.text.map(Message::Text),
-                "binary" => msg.data.map(Message::Binary),
-                "ping" => Some(Message::Ping(Vec::new())),
-                "pong" => Some(Message::Pong(Vec::new())),
+                // tungstenite 0.30 uses `Utf8Bytes`/`Bytes` for text/binary payloads.
+                "text" => msg.text.map(|t| Message::Text(t.into())),
+                "binary" => msg.data.map(|d| Message::Binary(d.into())),
+                "ping" => Some(Message::Ping(Vec::new().into())),
+                "pong" => Some(Message::Pong(Vec::new().into())),
                 "close" => Some(Message::Close(None)),
                 _ => None,
             };
@@ -487,12 +488,15 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, 
         while let Some(item) = stream.next().await {
             match item {
                 Ok(Message::Text(text)) => {
-                    if in_tx.send(WebSocketMessage::from_text(&text)).is_err() {
+                    if in_tx.send(WebSocketMessage::from_text(text.as_str())).is_err() {
                         break;
                     }
                 }
                 Ok(Message::Binary(data)) => {
-                    if in_tx.send(WebSocketMessage::from_binary(data)).is_err() {
+                    if in_tx
+                        .send(WebSocketMessage::from_binary(data.to_vec()))
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -500,7 +504,7 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: PyObject, 
                     let msg = WebSocketMessage {
                         msg_type: "ping".to_string(),
                         text: None,
-                        data: Some(payload),
+                        data: Some(payload.to_vec()),
                     };
                     if in_tx.send(msg).is_err() {
                         break;

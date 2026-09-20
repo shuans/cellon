@@ -59,24 +59,6 @@ impl Router {
         }
     }
 
-    /// Convert Python-style path params {param} to matchit-style :param
-    #[inline]
-    fn convert_path_params(path: &str) -> String {
-        let mut result = String::with_capacity(path.len());
-
-        for c in path.chars() {
-            if c == '{' {
-                result.push(':');
-            } else if c == '}' {
-                // Skip closing brace
-            } else {
-                result.push(c);
-            }
-        }
-
-        result
-    }
-
     /// Extract a `RouteMatch` from a matched radix-tree node.
     #[inline]
     fn extract_match(router: &MatchitRouter<usize>, path: &str) -> Option<RouteMatch> {
@@ -100,20 +82,19 @@ impl Router {
     /// * `handler_id` - ID of the registered handler
     pub fn add_route(&mut self, method: &str, path: &str, handler_id: usize) -> Result<(), String> {
         let method = method.to_uppercase();
-        // Convert {param} to :param for matchit compatibility
-        let converted_path = Self::convert_path_params(path);
-
+        // matchit 0.9 uses the `{param}` syntax natively, so the route is
+        // inserted as-is (older versions required `:param`).
         if let Some(index) = standard_method_index(&method) {
             let mut routes = self.routes.write();
             let router = routes[index].get_or_insert_with(MatchitRouter::new);
             router
-                .insert(&converted_path, handler_id)
+                .insert(path, handler_id)
                 .map_err(|e| format!("Failed to add route: {e}"))
         } else {
             let mut other = self.other.write();
             let router = other.entry(method).or_default();
             router
-                .insert(&converted_path, handler_id)
+                .insert(path, handler_id)
                 .map_err(|e| format!("Failed to add route: {e}"))
         }
     }

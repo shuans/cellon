@@ -23,11 +23,6 @@ use super::{path_matches_skip, AsyncMiddleware, MiddlewareAction, MiddlewareResu
 use crate::request::Request;
 use crate::response::Response;
 
-// OpenTelemetry types available for future full SDK integration
-#[allow(unused_imports)]
-use opentelemetry::global;
-#[allow(unused_imports)]
-use opentelemetry_sdk::trace::Sampler;
 use parking_lot::RwLock;
 use serde_json;
 use std::collections::HashMap;

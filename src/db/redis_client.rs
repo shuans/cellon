@@ -49,19 +49,26 @@ fn redis_value_to_py(py: Python<'_>, value: &redis::Value) -> PyObject {
     match value {
         redis::Value::Nil => py.None(),
         redis::Value::Int(i) => i.into_py(py),
-        redis::Value::Data(bytes) => match std::str::from_utf8(bytes) {
+        // redis 0.27+/1.x renamed `Data` -> `BulkString`.
+        redis::Value::BulkString(bytes) => match std::str::from_utf8(bytes) {
             Ok(s) => s.into_py(py),
             Err(_) => PyBytes::new(py, bytes).into_py(py),
         },
-        redis::Value::Bulk(items) => {
+        // ...and `Bulk` -> `Array`.
+        redis::Value::Array(items) => {
             let list = pyo3::types::PyList::empty(py);
             for item in items {
                 let _ = list.append(redis_value_to_py(py, item));
             }
             list.into_py(py)
         }
-        redis::Value::Status(s) => s.into_py(py),
+        // ...and `Status` -> `SimpleString`.
+        redis::Value::SimpleString(s) => s.into_py(py),
         redis::Value::Okay => "OK".into_py(py),
+        // redis 1.x added more variants (Double, Boolean, Map, Set, VerbatimString,
+        // Push, Attribute, BigNumber); render any of them via `Debug` so the match
+        // stays exhaustive across versions.
+        other => format!("{other:?}").into_py(py),
     }
 }
 
@@ -99,8 +106,9 @@ async fn get_conn(
 ) -> PyResult<ConnectionManager> {
     let mut guard = manager.lock().await;
     if guard.is_none() {
-        let mgr = client
-            .get_connection_manager()
+        // redis 0.27+ prefers `ConnectionManager::new` over the deprecated
+        // `Client::get_connection_manager`.
+        let mgr = ConnectionManager::new(client)
             .await
             .map_err(|e| rt_err(format!("Redis connection failed: {e}")))?;
         *guard = Some(mgr);

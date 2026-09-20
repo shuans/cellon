@@ -38,8 +38,8 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Generate UUID v4.
 pub fn generate_uuid() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 16] = rng.gen();
+    let mut rng = rand::rng();
+    let bytes: [u8; 16] = rng.random();
 
     // Set version (4) and variant (RFC 4122)
     let mut uuid_bytes = bytes;
@@ -67,8 +67,8 @@ pub fn generate_uuid() -> String {
 
 /// Generate short hex ID.
 pub fn generate_short_hex(length: usize) -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..(length / 2 + 1)).map(|_| rng.gen()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..(length / 2 + 1)).map(|_| rng.random()).collect();
     hex::encode(&bytes)[..length].to_string()
 }
 

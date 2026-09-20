@@ -363,10 +363,14 @@ impl AdvancedRouter {
         *self.catch_all.write() = Some(metadata);
     }
 
-    /// Convert path from Python style `{param}` or `{param:type}` to matchit style `:param`.
+    /// Normalize a Python-style path for matchit 0.9.
+    ///
+    /// matchit 0.9 uses `{param}` natively, so a plain `{param}` is left as-is;
+    /// a typed constraint `{param:type}` is reduced to `{param}` (the constraint
+    /// itself is enforced separately by `extract_constraints`).
     fn convert_path(&self, path: &str) -> String {
         let re = Regex::new(r"\{([^}:]+)(?::[^}]+)?\}").unwrap();
-        re.replace_all(path, ":$1").to_string()
+        re.replace_all(path, "{$1}").to_string()
     }
 
     /// Extract constraints from path like `{id:int}`.
@@ -619,8 +623,8 @@ mod tests {
     #[test]
     fn test_path_conversion() {
         let router = AdvancedRouter::new();
-        assert_eq!(router.convert_path("/users/{id}"), "/users/:id");
-        assert_eq!(router.convert_path("/users/{id:int}"), "/users/:id");
-        assert_eq!(router.convert_path("/files/{path:path}"), "/files/:path");
+        assert_eq!(router.convert_path("/users/{id}"), "/users/{id}");
+        assert_eq!(router.convert_path("/users/{id:int}"), "/users/{id}");
+        assert_eq!(router.convert_path("/files/{path:path}"), "/files/{path}");
     }
 }

@@ -132,17 +132,17 @@ Request → Rust HTTP Engine → Python Handler → Rust Response
 | Async Runtime | `tokio 1.x` | Full-featured async runtime |
 | HTTP Server | `hyper 1.x` | HTTP/1.1 server |
 | HTTP/2 | `h2 0.4` | HTTP/2 support |
-| HTTP/3 | `quinn 0.10` | QUIC protocol |
-| TLS | `rustls 0.22` | TLS implementation |
-| JSON | `simd-json 0.13` | SIMD-accelerated parsing |
+| HTTP/3 | `quinn 0.11` | QUIC protocol |
+| TLS | `rustls 0.23` | TLS implementation |
+| JSON | `simd-json 0.18` | SIMD-accelerated parsing |
 | Serialization | `serde 1` | Rust serialization |
-| Routing | `matchit 0.7` | Radix tree routing |
-| Concurrency | `dashmap 5` | Lock-free HashMaps |
+| Routing | `matchit 0.9` | Radix tree routing |
+| Concurrency | `dashmap 6` | Lock-free HashMaps |
 | Memory | `bumpalo 3` | Arena allocators |
-| JWT | `jsonwebtoken 9` | JWT authentication |
+| JWT | `jsonwebtoken 11` | JWT authentication |
 | Security | `subtle 2` | Constant-time comparison |
-| Metrics | `prometheus 0.13` | Prometheus metrics |
-| WebSocket | `tokio-tungstenite 0.21` | WebSocket support |
+| Metrics | `prometheus 0.14` | Prometheus metrics |
+| WebSocket | `tokio-tungstenite 0.30` | WebSocket support |
 | Multipart | `multer 3` | Form parsing |
 
 ## Coding Conventions

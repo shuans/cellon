@@ -7,7 +7,6 @@
 //! - Session security options
 
 use parking_lot::RwLock;
-use rand::rngs::OsRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -145,7 +144,7 @@ pub trait SessionStore: Send + Sync {
 
     /// Generate a new session ID using cryptographically secure randomness.
     fn generate_id(&self) -> String {
-        let bytes: [u8; 32] = OsRng.gen();
+        let bytes: [u8; 32] = rand::rng().random();
         hex::encode(bytes)
     }
 }

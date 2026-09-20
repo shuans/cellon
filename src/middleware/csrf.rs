@@ -7,7 +7,6 @@
 //! - Origin/Referer validation
 
 use hmac::{Hmac, Mac};
-use rand::rngs::OsRng;
 use rand::Rng;
 use sha2::Sha256;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -61,7 +60,7 @@ pub struct CsrfToken {
 impl CsrfToken {
     /// Generate a new CSRF token using cryptographically secure randomness.
     pub fn generate() -> Self {
-        let bytes: [u8; 32] = OsRng.gen();
+        let bytes: [u8; 32] = rand::rng().random();
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -75,7 +74,7 @@ impl CsrfToken {
 
     /// Generate signed token with secret using cryptographically secure randomness.
     pub fn generate_signed(secret: &[u8]) -> Self {
-        let random_bytes: [u8; 16] = OsRng.gen();
+        let random_bytes: [u8; 16] = rand::rng().random();
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()

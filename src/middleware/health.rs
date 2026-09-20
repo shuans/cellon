@@ -516,7 +516,8 @@ pub mod builtin {
 
             let disks = Disks::new_with_refreshed_list();
 
-            for disk in disks.list() {
+            // sysinfo 0.31+ removed `Disks::list`; iterate the collection directly.
+            for disk in &disks {
                 if disk.mount_point().to_string_lossy().starts_with(&path) {
                     let total = disk.total_space();
                     let available = disk.available_space();
