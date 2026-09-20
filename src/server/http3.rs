@@ -51,7 +51,7 @@ pub async fn run(
     ctx: ServeCtx,
 ) -> Result<(), String> {
     use h3_quinn::quinn::{self, crypto::rustls::QuicServerConfig};
-    use rustls_quic::pki_types::CertificateDer;
+    use rustls::pki_types::CertificateDer;
     use std::fs::File;
     use std::io::BufReader;
 
@@ -72,7 +72,7 @@ pub async fn run(
         .map_err(|e| format!("failed to parse HTTP/3 private key: {e}"))?
         .ok_or_else(|| "HTTP/3 private key file contains no private key".to_string())?;
 
-    let mut tls_config = rustls_quic::ServerConfig::builder()
+    let mut tls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| format!("invalid HTTP/3 certificate/key pair: {e}"))?;

@@ -23,7 +23,13 @@ pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["full"] }
 
 # Async HTTP client (Rust-native, no GIL during I/O)
-reqwest = { version = "0.13", features = ["rustls-tls", "gzip"], default-features = false }
+# reqwest 0.13 replaced `rustls-tls` with `rustls`, but that feature forces the
+# aws-lc-rs provider (`__rustls-aws-lc-rs`). This crate already enables
+# `rustls/ring` below (plus quinn), and compiling two providers into rustls makes
+# `CryptoProvider::from_crate_features()` bail out, so `ServerConfig::builder()`
+# in src/server/mod.rs would panic at runtime. `rustls-no-provider` lets reqwest
+# reuse the process-wide `ring` provider instead.
+reqwest = { version = "0.13", features = ["rustls-no-provider", "gzip"], default-features = false }
 
 # HTTP server
 http = "1"
@@ -97,11 +103,9 @@ quinn = { version = "0.11.7", default-features = false, features = [
 ] }
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
-# rustls 0.23 for the HTTP/3 QUIC handshake (quinn 0.11 uses it internally).
-rustls-quic = { package = "rustls", version = "0.23", default-features = false, features = [
-    "ring",
-    "std",
-] }
+# rustls 0.23 for the TLS acceptor and the HTTP/3 QUIC handshake (quinn 0.11
+# uses this same crate). Cargo rejects depending on one package under two names,
+# so the QUIC handshake must reference `rustls` directly, not a renamed alias.
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
