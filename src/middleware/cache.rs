@@ -65,10 +65,7 @@ impl CachedResponse {
         } else {
             let now = SystemTime::now();
             let expiry = self.cached_at + Duration::from_secs(self.ttl);
-            let remaining = expiry
-                .duration_since(now)
-                .unwrap_or_default()
-                .as_secs_f64();
+            let remaining = expiry.duration_since(now).unwrap_or_default().as_secs_f64();
             remaining.ceil() as u64
         }
     }
