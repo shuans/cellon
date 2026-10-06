@@ -103,7 +103,11 @@ impl Response {
     /// Create a JSON response.
     #[staticmethod]
     #[pyo3(signature = (data, status=None))]
-    pub fn json<'py>(py: Python<'py>, data: &Bound<'py, PyAny>, status: Option<u16>) -> PyResult<Self> {
+    pub fn json<'py>(
+        py: Python<'py>,
+        data: &Bound<'py, PyAny>,
+        status: Option<u16>,
+    ) -> PyResult<Self> {
         let json_value =
             python_to_json(py, data).map_err(pyo3::exceptions::PyValueError::new_err)?;
         let body = Bytes::from(

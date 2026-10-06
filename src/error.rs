@@ -593,7 +593,11 @@ impl ErrorHandlerRegistry {
                 return true;
             }
         }
-        if self.status_handlers.read().contains_key(&error.status_code()) {
+        if self
+            .status_handlers
+            .read()
+            .contains_key(&error.status_code())
+        {
             return true;
         }
         self.global.read().is_some()

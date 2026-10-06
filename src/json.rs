@@ -5,7 +5,7 @@
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyList, PyInt, PyString, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 /// Parse JSON string to serde_json::Value.
 /// Uses SIMD acceleration on x86_64 and aarch64 (NEON), falls back to serde_json
@@ -58,7 +58,10 @@ pub fn serialize_json_pretty(value: &serde_json::Value) -> Result<String, String
 
 /// Convert a Python object to serde_json::Value.
 #[inline]
-pub fn python_to_json<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Result<serde_json::Value, String> {
+pub fn python_to_json<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+) -> Result<serde_json::Value, String> {
     // Handle None
     if obj.is_none() {
         return Ok(serde_json::Value::Null);
@@ -230,7 +233,11 @@ pub fn python_to_json_bytes_direct<'py>(
 }
 
 /// Write a Python object as JSON directly to a byte buffer.
-fn write_json_value<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>, buf: &mut Vec<u8>) -> Result<(), String> {
+fn write_json_value<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+    buf: &mut Vec<u8>,
+) -> Result<(), String> {
     use std::io::Write;
 
     // Handle None

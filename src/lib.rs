@@ -239,7 +239,8 @@ impl Cello {
 
     /// Register a handler for a Python exception type.
     pub fn register_exception_handler(&self, exception_type: String, handler: Py<PyAny>) {
-        self.error_handlers.set_exception_handler(exception_type, handler);
+        self.error_handlers
+            .set_exception_handler(exception_type, handler);
     }
 
     /// Enable CORS middleware.
@@ -311,7 +312,7 @@ impl Cello {
             _ => {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "Unknown rate limit algorithm",
-                ))
+                ));
             }
         };
 
@@ -384,7 +385,8 @@ impl Cello {
     /// binds a QUIC/UDP endpoint on the same host:port and serves the same
     /// routes over HTTP/3 using the TLS certificate/key.
     pub fn enable_http3(&mut self, config: Option<PyHttp3Config>) {
-        self.http3_config = Some(config.unwrap_or_else(|| PyHttp3Config::new(30, 1350, 100, false)));
+        self.http3_config =
+            Some(config.unwrap_or_else(|| PyHttp3Config::new(30, 1350, 100, false)));
     }
 
     /// Configure the server's cluster settings.
@@ -402,13 +404,11 @@ impl Cello {
 
     /// Enable static file serving.
     pub fn enable_static_files(&mut self, config: PyStaticFilesConfig) -> PyResult<()> {
-        let mut static_config = middleware::static_files::StaticFilesConfig::new(
-            &config.prefix,
-            &config.root,
-        )
-        .etag(config.enable_etag)
-        .last_modified(config.enable_last_modified)
-        .dir_listing(config.directory_listing);
+        let mut static_config =
+            middleware::static_files::StaticFilesConfig::new(&config.prefix, &config.root)
+                .etag(config.enable_etag)
+                .last_modified(config.enable_last_modified)
+                .dir_listing(config.directory_listing);
 
         if let Some(index) = config.index_file.as_deref() {
             static_config = static_config.index(index);
@@ -420,7 +420,9 @@ impl Cello {
         }
 
         self.middleware
-            .add(middleware::StaticFilesMiddleware::with_config(static_config));
+            .add(middleware::StaticFilesMiddleware::with_config(
+                static_config,
+            ));
         Ok(())
     }
 
@@ -492,7 +494,7 @@ impl Cello {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "Unsupported JWT algorithm: {}",
                     config.algorithm
-                )))
+                )));
             }
         };
         let jwt_config = middleware::auth::JwtConfig {
@@ -1061,10 +1063,16 @@ def openapi_handler(request):
         let prometheus = self.prometheus.clone();
         let error_handlers = self.error_handlers.clone();
         // `Py<T>` is not `Clone` in pyo3 0.29, so clone the handler refs under the GIL.
-        let startup_handlers: Vec<Py<PyAny>> =
-            self.startup_handlers.iter().map(|h| h.clone_ref(py)).collect();
-        let shutdown_handlers: Vec<Py<PyAny>> =
-            self.shutdown_handlers.iter().map(|h| h.clone_ref(py)).collect();
+        let startup_handlers: Vec<Py<PyAny>> = self
+            .startup_handlers
+            .iter()
+            .map(|h| h.clone_ref(py))
+            .collect();
+        let shutdown_handlers: Vec<Py<PyAny>> = self
+            .shutdown_handlers
+            .iter()
+            .map(|h| h.clone_ref(py))
+            .collect();
 
         // Limits/timeouts are plain Copy values captured for the server config.
         let max_body_size = self.max_body_size;
@@ -2470,7 +2478,14 @@ impl PyEventSourcingConfig {
         } else {
             format!("duckdb://{path}")
         };
-        Ok(Self::new("duckdb", 100, true, 10000, 0, Some(connection_url)))
+        Ok(Self::new(
+            "duckdb",
+            100,
+            true,
+            10000,
+            0,
+            Some(connection_url),
+        ))
     }
 
     /// Create a PostgreSQL-backed event sourcing configuration.

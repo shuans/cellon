@@ -7,11 +7,11 @@
 //! - Custom key extraction
 
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 
@@ -295,7 +295,7 @@ impl RateLimitStore for TokenBucketStore {
                     limit: 0,
                     reset: 0,
                     exceeded: false,
-                }
+                };
             }
         };
 
@@ -467,7 +467,7 @@ impl RateLimitStore for SlidingWindowStore {
                     limit: 0,
                     reset: 0,
                     exceeded: false,
-                }
+                };
             }
         };
 

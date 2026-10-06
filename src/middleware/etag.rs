@@ -9,7 +9,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 

@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 
 // ============================================================================

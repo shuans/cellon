@@ -37,11 +37,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Blocking: a formatting failure means the tree is not rustfmt-clean.
       - name: Check Rust formatting
-        run: cargo fmt --check || echo "Formatting issues found (non-blocking)"
+        run: cargo fmt --check
 
+      # Blocking: this compiles every target (lib, tests, benches), so it is the
+      # step that catches broken `#[cfg(test)]` modules.
       - name: Run Clippy
-        run: cargo clippy --all-targets || echo "Clippy warnings found (non-blocking)"
+        run: cargo clippy --all-targets
 
       # The `full` feature compiles the optional graphql/grpc deps; the regular
       # maturin build does not, so check it explicitly. Blocking: this is the
@@ -50,16 +53,30 @@ jobs:
         run: cargo check --features full
 
       # Rust unit tests (accept-key vectors, gRPC streaming, logging config...).
-      # Non-blocking: pyo3 extension-module test binaries can fail to link on
-      # some runners; `cargo clippy --all-targets` still typechecks them.
       - name: Run Rust unit tests
-        run: cargo test --lib || echo "Rust unit test issues found (non-blocking)"
+        run: cargo test --lib
 
       - name: Install Python linters
         run: pip install ruff
 
-      - name: Run Ruff
-        run: ruff check python/ tests/ || echo "Ruff issues found (non-blocking)"
+      # Blocking: real error classes only — syntax errors, undefined names,
+      # undefined names in `__all__` and `else`/`finally` without a block.
+      # This is the subset that indicates a bug rather than a style preference;
+      # it is clean today (it is what caught the unbound `sys` in the Windows
+      # worker launcher in python/cello/__init__.py).
+      - name: Run Ruff (correctness rules)
+        run: ruff check python/ tests/ --select E9,F63,F7,F82
+
+      # Informational: the full configured rule set still reports pre-existing
+      # style debt (ARG001 x143, UP006 x82, I001 x78, W293 x72, UP045 x58,
+      # F401 x24, ... 611 findings; 352 are `ruff --fix`-able).
+      # `continue-on-error` keeps the count
+      # visible in the job summary without gating on it yet; the blocking
+      # correctness step above is the gate. Clear this debt, then drop
+      # `continue-on-error` and the `--statistics` report step.
+      - name: Run Ruff (full rule set, informational)
+        continue-on-error: true
+        run: ruff check python/ tests/ --statistics
 
   test:
     name: Test (${{ matrix.os }})

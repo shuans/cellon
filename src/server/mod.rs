@@ -16,7 +16,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{body::Incoming, Request as HyperRequest, Response as HyperResponse, StatusCode};
+use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode, body::Incoming};
 use hyper_util::rt::TokioIo;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 type TlsAcceptor = tokio_rustls::TlsAcceptor;
@@ -48,7 +48,8 @@ fn build_tls_acceptor(config: &TlsConfig) -> Result<TlsAcceptor, String> {
     use std::io::BufReader;
 
     let mut cert_reader = BufReader::new(
-        File::open(&config.cert_path).map_err(|e| format!("failed to open TLS certificate: {e}"))?,
+        File::open(&config.cert_path)
+            .map_err(|e| format!("failed to open TLS certificate: {e}"))?,
     );
     let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
         .collect::<Result<Vec<_>, _>>()
@@ -600,9 +601,7 @@ impl Server {
             let h3_addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
                 .parse()
                 .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "Invalid HTTP/3 address: {e}"
-                    ))
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP/3 address: {e}"))
                 })?;
             let h3_ctx = http3::ServeCtx {
                 router: router.clone(),
@@ -980,7 +979,7 @@ where
                 Some(t) => match tokio::time::timeout(t, collect_fut).await {
                     Ok(inner) => inner,
                     Err(_) => {
-                        return Some(Response::error(408, "Request Timeout: body read timed out"))
+                        return Some(Response::error(408, "Request Timeout: body read timed out"));
                     }
                 },
                 None => collect_fut.await,
@@ -991,7 +990,7 @@ where
                     return Some(Response::error(
                         413,
                         "Payload Too Large: request body exceeds limit",
-                    ))
+                    ));
                 }
             }
         }

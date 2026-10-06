@@ -10,15 +10,15 @@
 //! - Label support (method, path, status)
 
 use prometheus::{
+    CounterVec, Encoder, GaugeVec, HistogramVec, Registry, TextEncoder,
     register_counter_vec_with_registry, register_gauge_vec_with_registry,
-    register_histogram_vec_with_registry, CounterVec, Encoder, GaugeVec, HistogramVec, Registry,
-    TextEncoder,
+    register_histogram_vec_with_registry,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 

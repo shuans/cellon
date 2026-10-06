@@ -19,7 +19,7 @@
 //! ))
 //! ```
 
-use super::{path_matches_skip, AsyncMiddleware, MiddlewareAction, MiddlewareResult};
+use super::{AsyncMiddleware, MiddlewareAction, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 
@@ -28,8 +28,8 @@ use serde_json;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Configuration for OpenTelemetry middleware.

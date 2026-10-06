@@ -73,12 +73,7 @@ fn create_loop(py: Python<'_>) -> PyResult<Py<PyAny>> {
     // PyO3 0.23+ takes the source/filename/module name as `CStr`.
     let code = std::ffi::CString::new(RUNNER_SRC)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    let module = PyModule::from_code(
-        py,
-        &code,
-        c"cello_async_loop.py",
-        c"cello_async_loop",
-    )?;
+    let module = PyModule::from_code(py, &code, c"cello_async_loop.py", c"cello_async_loop")?;
     let loop_obj = module.getattr("start_loop")?.call0()?;
     loop_obj.into_py_any(py)
 }
@@ -115,13 +110,13 @@ pub fn ensure_started(py: Python<'_>) {
 /// MUST be called from a blocking context (e.g. `tokio::task::spawn_blocking`): the
 /// wait inside `Future.result()` releases the GIL so the loop and other coroutines
 /// keep running concurrently.
-pub fn run_coroutine_blocking<'py>(py: Python<'py>, coro: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
+pub fn run_coroutine_blocking<'py>(
+    py: Python<'py>,
+    coro: &Bound<'py, PyAny>,
+) -> PyResult<Py<PyAny>> {
     let event_loop = get_loop(py)?;
     let asyncio = py.import("asyncio")?;
-    let cfut = asyncio.call_method1(
-        "run_coroutine_threadsafe",
-        (coro, event_loop.bind(py)),
-    )?;
+    let cfut = asyncio.call_method1("run_coroutine_threadsafe", (coro, event_loop.bind(py)))?;
     // Blocks until the coroutine finishes; the internal wait releases the GIL.
     cfut.call_method0("result")?.into_py_any(py)
 }

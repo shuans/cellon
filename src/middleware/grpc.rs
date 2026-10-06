@@ -1155,11 +1155,9 @@ mod tests {
     #[test]
     fn test_grpc_reflection_descriptors() {
         let server = GrpcServer::new(GrpcConfig::new().with_reflection(true));
-        let service = GrpcServiceDef::new("helloworld.Greeter").add_method(GrpcMethodDef::bidi_streaming(
-            "SayHelloStream",
-            "HelloRequest",
-            "HelloReply",
-        ));
+        let service = GrpcServiceDef::new("helloworld.Greeter").add_method(
+            GrpcMethodDef::bidi_streaming("SayHelloStream", "HelloRequest", "HelloReply"),
+        );
         server.register_service(service);
 
         let descriptors = server.reflection_descriptors();

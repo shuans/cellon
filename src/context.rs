@@ -169,7 +169,12 @@ impl PyContext {
             .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }
 
-    fn __setitem__<'py>(&self, py: Python<'py>, key: &str, value: &Bound<'py, PyAny>) -> PyResult<()> {
+    fn __setitem__<'py>(
+        &self,
+        py: Python<'py>,
+        key: &str,
+        value: &Bound<'py, PyAny>,
+    ) -> PyResult<()> {
         self.set(py, key, value)
     }
 

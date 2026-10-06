@@ -12,8 +12,8 @@ use bytes::BytesMut;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes};
-use tokio_postgres::types::{to_sql_checked, IsNull, ToSql, Type};
 use tokio_postgres::Row;
+use tokio_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 
 /// A dynamically-typed SQL parameter converted from a Python object.
 ///
@@ -159,7 +159,10 @@ fn pg_value_to_py(py: Python<'_>, row: &Row, idx: usize, ty: &Type) -> PyResult<
             None => py.None(),
         },
         Type::TIMESTAMP => match get!(chrono::NaiveDateTime) {
-            Some(t) => t.format("%Y-%m-%dT%H:%M:%S%.6f").to_string().into_py_any(py)?,
+            Some(t) => t
+                .format("%Y-%m-%dT%H:%M:%S%.6f")
+                .to_string()
+                .into_py_any(py)?,
             None => py.None(),
         },
         Type::TIMESTAMPTZ => match get!(chrono::DateTime<chrono::Utc>) {

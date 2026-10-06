@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 

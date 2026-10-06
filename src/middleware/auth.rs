@@ -5,8 +5,8 @@
 //! - Basic authentication
 //! - API Key authentication
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 
@@ -454,7 +454,7 @@ impl Middleware for BasicAuth {
             None => {
                 return Ok(MiddlewareAction::Stop(
                     self.challenge("Invalid or missing Basic authentication"),
-                ))
+                ));
             }
         };
 

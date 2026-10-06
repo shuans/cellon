@@ -2232,9 +2232,13 @@ class App:
         mode, ensuring all routes are properly registered in each worker process.
         This is the same pattern used by Gunicorn/Uvicorn for Windows support.
         """
-        import subprocess
-        import signal
         import os
+        import signal
+        import subprocess
+        # `sys` is imported as `_sys` (and deleted) at module scope, so it must
+        # be rebound here: this launcher uses sys.executable / sys.argv /
+        # sys.exit below.
+        import sys
 
         print(f"    \033[32m➜\033[0m  \033[1mMode:\033[0m      Multi-process (subprocess re-execution)")
 

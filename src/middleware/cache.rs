@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 use std::future::Future;
 use std::pin::Pin;
 
-use super::{path_matches_skip, AsyncMiddleware, MiddlewareAction, MiddlewareResult};
+use super::{AsyncMiddleware, MiddlewareAction, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 
@@ -821,13 +821,12 @@ mod tests {
         let key = builder.build_key(&request);
         assert_eq!(key, "GET|/api/users");
 
-        // With query params
-        request
-            .query_params
-            .insert("limit".to_string(), "10".to_string());
-        request
-            .query_params
-            .insert("offset".to_string(), "0".to_string());
+        // With query params. `query_params` is an `Arc<HashMap<_, _>>` so that
+        // cloning a request stays O(1); build the map, then install it.
+        let mut query = std::collections::HashMap::new();
+        query.insert("limit".to_string(), "10".to_string());
+        query.insert("offset".to_string(), "0".to_string());
+        request.query_params = std::sync::Arc::new(query);
 
         let key = builder.build_key(&request);
         assert!(key.contains("GET|/api/users"));
@@ -897,12 +896,10 @@ mod tests {
         let mut request = Request::default();
         request.method = "GET".to_string();
         request.path = "/users".to_string();
-        request
-            .query_params
-            .insert("sort".to_string(), "name".to_string());
-        request
-            .query_params
-            .insert("limit".to_string(), "10".to_string());
+        let mut query = std::collections::HashMap::new();
+        query.insert("sort".to_string(), "name".to_string());
+        query.insert("limit".to_string(), "10".to_string());
+        request.query_params = std::sync::Arc::new(query);
 
         let key = create_cache_key(&request);
         assert!(key.contains("GET|/users"));

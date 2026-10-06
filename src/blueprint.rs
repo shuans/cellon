@@ -101,11 +101,7 @@ impl Blueprint {
         let routes = self.routes.read();
         for route in routes.iter() {
             let full_path = format!("{}{}", self.prefix, route.path);
-            all_routes.push((
-                route.method.clone(),
-                full_path,
-                route.handler.clone_ref(py),
-            ));
+            all_routes.push((route.method.clone(), full_path, route.handler.clone_ref(py)));
         }
 
         // Add routes from nested blueprints

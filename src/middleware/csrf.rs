@@ -12,7 +12,7 @@ use sha2::Sha256;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use crate::response::Response;
 
@@ -572,9 +572,11 @@ mod tests {
         assert_eq!(config.cookie_name, "my_csrf");
         assert_eq!(config.header_name, "X-My-CSRF");
         assert!(config.skip_paths.contains(&"/api/webhook".to_string()));
-        assert!(config
-            .allowed_origins
-            .contains(&"https://example.com".to_string()));
+        assert!(
+            config
+                .allowed_origins
+                .contains(&"https://example.com".to_string())
+        );
     }
 
     #[test]

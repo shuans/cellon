@@ -509,9 +509,9 @@ impl StaticFilesMiddleware {
         // Check If-Modified-Since
         if self.config.last_modified {
             if let Some(if_modified_since) = request.headers.get("if-modified-since") {
-            if let Ok(modified) = metadata.modified() {
-                // Simple comparison - could be more sophisticated
-                let modified_str = format_http_date(modified);
+                if let Ok(modified) = metadata.modified() {
+                    // Simple comparison - could be more sophisticated
+                    let modified_str = format_http_date(modified);
                     if &modified_str == if_modified_since {
                         return Some(Response::new(304));
                     }

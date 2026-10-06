@@ -25,10 +25,10 @@ use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use tokio::sync::Mutex;
-use tokio_postgres::types::ToSql;
 use tokio_postgres::NoTls;
+use tokio_postgres::types::ToSql;
 
-use super::value::{py_params_to_sqlparams, row_to_pydict, SqlParam};
+use super::value::{SqlParam, py_params_to_sqlparams, row_to_pydict};
 
 fn rt_err(msg: impl std::fmt::Display) -> PyErr {
     pyo3::exceptions::PyRuntimeError::new_err(msg.to_string())
@@ -73,7 +73,12 @@ impl PyDatabase {
 impl PyDatabase {
     /// Execute a statement, returning the number of rows affected.
     #[pyo3(signature = (sql, *params))]
-    fn execute<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn execute<'py>(
+        &self,
+        py: Python<'py>,
+        sql: String,
+        params: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let pool = self.pool.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -86,7 +91,12 @@ impl PyDatabase {
 
     /// Run a query and return every row as a list of dicts.
     #[pyo3(signature = (sql, *params))]
-    fn fetch<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn fetch<'py>(
+        &self,
+        py: Python<'py>,
+        sql: String,
+        params: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let pool = self.pool.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -242,7 +252,12 @@ impl PyTransaction {
 
     /// Execute a statement inside the transaction; returns rows affected.
     #[pyo3(signature = (sql, *params))]
-    fn execute<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn execute<'py>(
+        &self,
+        py: Python<'py>,
+        sql: String,
+        params: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let slot = self.conn.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -258,7 +273,12 @@ impl PyTransaction {
 
     /// Fetch rows inside the transaction.
     #[pyo3(signature = (sql, *params))]
-    fn fetch<'py>(&self, py: Python<'py>, sql: String, params: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn fetch<'py>(
+        &self,
+        py: Python<'py>,
+        sql: String,
+        params: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let sql_params = py_params_to_sqlparams(&params.iter().collect::<Vec<_>>())?;
         let slot = self.conn.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {

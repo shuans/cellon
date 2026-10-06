@@ -190,7 +190,11 @@ impl PyRedis {
     }
 
     #[pyo3(signature = (*keys))]
-    fn delete<'py>(&self, py: Python<'py>, keys: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn delete<'py>(
+        &self,
+        py: Python<'py>,
+        keys: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let mut cmd = redis::cmd("DEL");
         for k in keys.iter() {
             cmd.arg(k.extract::<String>()?);
@@ -199,7 +203,11 @@ impl PyRedis {
     }
 
     #[pyo3(signature = (*keys))]
-    fn exists<'py>(&self, py: Python<'py>, keys: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn exists<'py>(
+        &self,
+        py: Python<'py>,
+        keys: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let mut cmd = redis::cmd("EXISTS");
         for k in keys.iter() {
             cmd.arg(k.extract::<String>()?);
@@ -207,7 +215,12 @@ impl PyRedis {
         self.run(py, cmd)
     }
 
-    fn expire<'py>(&self, py: Python<'py>, key: String, seconds: i64) -> PyResult<Bound<'py, PyAny>> {
+    fn expire<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        seconds: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.run(py, redis::cmd("EXPIRE").arg(key).arg(seconds).to_owned())
     }
 
@@ -219,7 +232,12 @@ impl PyRedis {
         self.run(py, redis::cmd("INCR").arg(key).to_owned())
     }
 
-    fn incrby<'py>(&self, py: Python<'py>, key: String, amount: i64) -> PyResult<Bound<'py, PyAny>> {
+    fn incrby<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        amount: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.run(py, redis::cmd("INCRBY").arg(key).arg(amount).to_owned())
     }
 
@@ -227,12 +245,21 @@ impl PyRedis {
         self.run(py, redis::cmd("DECR").arg(key).to_owned())
     }
 
-    fn decrby<'py>(&self, py: Python<'py>, key: String, amount: i64) -> PyResult<Bound<'py, PyAny>> {
+    fn decrby<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        amount: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.run(py, redis::cmd("DECRBY").arg(key).arg(amount).to_owned())
     }
 
     #[pyo3(signature = (*keys))]
-    fn mget<'py>(&self, py: Python<'py>, keys: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn mget<'py>(
+        &self,
+        py: Python<'py>,
+        keys: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let mut cmd = redis::cmd("MGET");
         for k in keys.iter() {
             cmd.arg(k.extract::<String>()?);
@@ -246,7 +273,12 @@ impl PyRedis {
 
     // ── Hashes ────────────────────────────────────────────────────────────────
 
-    fn hget<'py>(&self, py: Python<'py>, key: String, field: String) -> PyResult<Bound<'py, PyAny>> {
+    fn hget<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        field: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.run(py, redis::cmd("HGET").arg(key).arg(field).to_owned())
     }
 
@@ -268,14 +300,24 @@ impl PyRedis {
         self.run(py, redis::cmd("HGETALL").arg(key).to_owned())
     }
 
-    fn hdel<'py>(&self, py: Python<'py>, key: String, field: String) -> PyResult<Bound<'py, PyAny>> {
+    fn hdel<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        field: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.run(py, redis::cmd("HDEL").arg(key).arg(field).to_owned())
     }
 
     // ── Lists ─────────────────────────────────────────────────────────────────
 
     #[pyo3(signature = (key, *values))]
-    fn lpush<'py>(&self, py: Python<'py>, key: String, values: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn lpush<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        values: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let mut cmd = redis::cmd("LPUSH");
         cmd.arg(key);
         for v in values.iter() {
@@ -285,7 +327,12 @@ impl PyRedis {
     }
 
     #[pyo3(signature = (key, *values))]
-    fn rpush<'py>(&self, py: Python<'py>, key: String, values: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn rpush<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        values: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let mut cmd = redis::cmd("RPUSH");
         cmd.arg(key);
         for v in values.iter() {
@@ -327,7 +374,12 @@ impl PyRedis {
     // ── Sets ──────────────────────────────────────────────────────────────────
 
     #[pyo3(signature = (key, *members))]
-    fn sadd<'py>(&self, py: Python<'py>, key: String, members: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyAny>> {
+    fn sadd<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        members: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let mut cmd = redis::cmd("SADD");
         cmd.arg(key);
         for m in members.iter() {
@@ -336,7 +388,12 @@ impl PyRedis {
         self.run(py, cmd)
     }
 
-    fn srem<'py>(&self, py: Python<'py>, key: String, member: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn srem<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        member: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let m = py_to_redis_bytes(member)?;
         self.run(py, redis::cmd("SREM").arg(key).arg(m).to_owned())
     }
@@ -345,7 +402,12 @@ impl PyRedis {
         self.run(py, redis::cmd("SMEMBERS").arg(key).to_owned())
     }
 
-    fn sismember<'py>(&self, py: Python<'py>, key: String, member: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn sismember<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+        member: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let m = py_to_redis_bytes(member)?;
         self.run(py, redis::cmd("SISMEMBER").arg(key).arg(m).to_owned())
     }

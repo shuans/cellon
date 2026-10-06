@@ -7,8 +7,8 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use serde::Serialize;
 use std::io::Cursor;
 
@@ -387,7 +387,10 @@ pub fn python_to_xml<'py>(
 }
 
 /// Convert Python object to JSON value.
-fn python_to_json_value<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Result<serde_json::Value, String> {
+fn python_to_json_value<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+) -> Result<serde_json::Value, String> {
     if obj.is_none() {
         return Ok(serde_json::Value::Null);
     }

@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::{path_matches_skip, Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult};
+use super::{Middleware, MiddlewareAction, MiddlewareError, MiddlewareResult, path_matches_skip};
 use crate::request::Request;
 use pyo3::prelude::*;
 
@@ -710,16 +710,18 @@ mod tests {
             }
         });
 
+        // `headers` is an `Arc<HashMap<_, _>>`, so the map is assembled first and
+        // then installed on the request.
         let mut request = Request::default();
-        request
-            .headers
-            .insert("x-real-ip".to_string(), "127.0.0.1".to_string());
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("x-real-ip".to_string(), "127.0.0.1".to_string());
+        request.headers = std::sync::Arc::new(headers);
 
         assert!(guard.check(&request).is_ok());
 
-        request
-            .headers
-            .insert("x-real-ip".to_string(), "192.168.1.1".to_string());
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("x-real-ip".to_string(), "192.168.1.1".to_string());
+        request.headers = std::sync::Arc::new(headers);
         assert!(guard.check(&request).is_err());
     }
 }

@@ -17,10 +17,10 @@ use h3::server::RequestResolver;
 
 use crate::error::ErrorHandlerRegistry;
 use crate::handler::HandlerRegistry;
-use crate::middleware::{guards::GuardsMiddleware, MiddlewareChain};
+use crate::middleware::{MiddlewareChain, guards::GuardsMiddleware};
 use crate::router::Router;
 use crate::server::protocols::Http3Config;
-use crate::server::{handle_request, ServerMetrics, ShutdownCoordinator};
+use crate::server::{ServerMetrics, ShutdownCoordinator, handle_request};
 
 /// Shared serving context cloned into every connection/stream task.
 #[derive(Clone)]
@@ -32,9 +32,8 @@ pub struct ServeCtx {
     pub shutdown: Arc<ShutdownCoordinator>,
     pub dependency_container: Arc<crate::dependency::DependencyContainer>,
     pub guards: Arc<GuardsMiddleware>,
-    pub prometheus: Arc<
-        parking_lot::RwLock<Option<crate::middleware::prometheus::PrometheusMiddleware>>,
-    >,
+    pub prometheus:
+        Arc<parking_lot::RwLock<Option<crate::middleware::prometheus::PrometheusMiddleware>>>,
     pub error_handlers: Arc<ErrorHandlerRegistry>,
     pub max_body_size: usize,
     pub read_body_timeout: Option<Duration>,
@@ -95,7 +94,9 @@ pub async fn run(
     transport.initial_mtu(config.max_udp_payload_size);
     transport.receive_window(varint(config.initial_max_data));
     transport.stream_receive_window(varint(
-        config.initial_max_stream_data_bidi.max(config.initial_max_stream_data_uni),
+        config
+            .initial_max_stream_data_bidi
+            .max(config.initial_max_stream_data_uni),
     ));
     transport.max_concurrent_bidi_streams(varint(config.initial_max_streams_bidi));
     transport.max_concurrent_uni_streams(varint(config.initial_max_streams_uni));
@@ -109,17 +110,14 @@ pub async fn run(
         tokio::spawn(async move {
             match incoming.await {
                 Ok(conn) => {
-                    let mut h3_conn = match h3::server::Connection::new(
-                        h3_quinn::Connection::new(conn),
-                    )
-                    .await
-                    {
-                        Ok(conn) => conn,
-                        Err(err) => {
-                            eprintln!("HTTP/3 connection setup failed: {err}");
-                            return;
-                        }
-                    };
+                    let mut h3_conn =
+                        match h3::server::Connection::new(h3_quinn::Connection::new(conn)).await {
+                            Ok(conn) => conn,
+                            Err(err) => {
+                                eprintln!("HTTP/3 connection setup failed: {err}");
+                                return;
+                            }
+                        };
                     loop {
                         match h3_conn.accept().await {
                             Ok(Some(resolver)) => {
@@ -166,7 +164,9 @@ where
     // for the shared `handle_request` pipeline.
     let body = http_body_util::Full::new(Bytes::from(body_bytes));
 
-    let mut builder = HyperRequest::builder().method(method).uri(req.uri().clone());
+    let mut builder = HyperRequest::builder()
+        .method(method)
+        .uri(req.uri().clone());
     for (key, value) in req.headers() {
         builder = builder.header(key.as_str(), value);
     }
@@ -208,7 +208,10 @@ where
 }
 
 /// Drain the request body from the h3 stream (empty for GET/HEAD).
-async fn read_request_body<S>(stream: &mut h3::server::RequestStream<S, Bytes>, method: &str) -> Vec<u8>
+async fn read_request_body<S>(
+    stream: &mut h3::server::RequestStream<S, Bytes>,
+    method: &str,
+) -> Vec<u8>
 where
     S: h3::quic::RecvStream,
 {

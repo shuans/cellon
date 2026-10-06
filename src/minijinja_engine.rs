@@ -293,14 +293,18 @@ pub fn pyobj_to_json(val: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     // list / tuple → JSON array
     if val.is_instance_of::<PyList>() {
         let list = val.cast::<PyList>()?;
-        let arr: Vec<serde_json::Value> =
-            list.iter().map(|v| pyobj_to_json(&v)).collect::<PyResult<_>>()?;
+        let arr: Vec<serde_json::Value> = list
+            .iter()
+            .map(|v| pyobj_to_json(&v))
+            .collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
     if val.is_instance_of::<PyTuple>() {
         let tup = val.cast::<PyTuple>()?;
-        let arr: Vec<serde_json::Value> =
-            tup.iter().map(|v| pyobj_to_json(&v)).collect::<PyResult<_>>()?;
+        let arr: Vec<serde_json::Value> = tup
+            .iter()
+            .map(|v| pyobj_to_json(&v))
+            .collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
     // dict → JSON object

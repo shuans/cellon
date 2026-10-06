@@ -14,10 +14,10 @@
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::mpsc;
 
 /// WebSocket message types for Python.
 ///
@@ -183,7 +183,10 @@ impl WebSocket {
 
     /// Send a JSON-serializable value as a text message.
     pub fn send_json<'py>(&self, py: Python<'py>, obj: &Bound<'py, PyAny>) -> PyResult<()> {
-        let json_str: String = py.import("json")?.call_method1("dumps", (obj,))?.extract()?;
+        let json_str: String = py
+            .import("json")?
+            .call_method1("dumps", (obj,))?
+            .extract()?;
         self.send_text(&json_str)
     }
 
@@ -442,9 +445,9 @@ pub fn websocket_key(headers: &hyper::HeaderMap) -> Option<String> {
 pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: Py<PyAny>, peer: String) {
     use futures_util::{SinkExt, StreamExt};
     use hyper_util::rt::TokioIo;
-    use tokio_tungstenite::tungstenite::protocol::Role;
-    use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::Message;
+    use tokio_tungstenite::tungstenite::protocol::Role;
 
     let io = TokioIo::new(upgraded);
     let ws_stream = WebSocketStream::from_raw_socket(io, Role::Server, None).await;
@@ -488,7 +491,10 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: Py<PyAny>,
         while let Some(item) = stream.next().await {
             match item {
                 Ok(Message::Text(text)) => {
-                    if in_tx.send(WebSocketMessage::from_text(text.as_str())).is_err() {
+                    if in_tx
+                        .send(WebSocketMessage::from_text(text.as_str()))
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -538,9 +544,7 @@ pub async fn run_session(upgraded: hyper::upgrade::Upgraded, handler: Py<PyAny>,
         Ok(obj) => {
             let is_coro = Python::attach(|py| {
                 py.import("inspect")
-                    .and_then(|inspect| {
-                        inspect.call_method1("iscoroutine", (obj.bind(py),))
-                    })
+                    .and_then(|inspect| inspect.call_method1("iscoroutine", (obj.bind(py),)))
                     .and_then(|r| r.is_truthy())
                     .unwrap_or(false)
             });

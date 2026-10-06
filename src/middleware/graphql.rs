@@ -29,7 +29,7 @@ use crate::response::Response;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;

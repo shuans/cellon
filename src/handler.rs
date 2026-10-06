@@ -8,8 +8,8 @@
 
 use parking_lot::RwLock;
 use pyo3::prelude::*;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::error::PythonExceptionInfo;
@@ -145,8 +145,13 @@ impl HandlerRegistry {
                 .bind(py)
                 .getattr("__cello_blocking__")
                 .ok()
-                .and_then(|v| if v.is_none() { None } else { v.is_truthy().ok() })
-            {
+                .and_then(|v| {
+                    if v.is_none() {
+                        None
+                    } else {
+                        v.is_truthy().ok()
+                    }
+                }) {
                 Some(true) => POLICY_ALWAYS,
                 Some(false) => POLICY_NEVER,
                 None => POLICY_AUTO,
@@ -325,9 +330,7 @@ impl HandlerRegistry {
                 .ok_or_else(|| format!("Handler {handler_id} not found"))?;
 
             // Call the Python handler with the request
-            let result = handler
-                .call1(py, (request,))
-                .map_err(|e| e.to_string())?;
+            let result = handler.call1(py, (request,)).map_err(|e| e.to_string())?;
 
             // Convert the result to a JSON value using SIMD-accelerated conversion
             python_to_json(py, result.bind(py))

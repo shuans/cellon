@@ -62,8 +62,8 @@ use crate::response::Response;
 pub use auth::{ApiKeyAuth, BasicAuth, JwtAuth};
 pub use body_limit::BodyLimitMiddleware;
 pub use cache::{
-    create_cache_key, CacheConfig, CacheError, CacheKeyBuilder, CacheMiddleware, CacheStore,
-    CachedResponse, DefaultCacheKeyBuilder, InMemoryCacheStore,
+    CacheConfig, CacheError, CacheKeyBuilder, CacheMiddleware, CacheStore, CachedResponse,
+    DefaultCacheKeyBuilder, InMemoryCacheStore, create_cache_key,
 };
 pub use circuit_breaker::{CircuitBreakerConfig, CircuitBreakerMiddleware};
 pub use cors::CorsMiddleware;
@@ -612,9 +612,10 @@ impl Middleware for LoggingMiddleware {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        request
-            .context
-            .insert("logging_start".to_string(), serde_json::Value::from(start_nanos));
+        request.context.insert(
+            "logging_start".to_string(),
+            serde_json::Value::from(start_nanos),
+        );
 
         let trace_id = if self.include_trace_context {
             request
@@ -839,8 +840,8 @@ impl Middleware for CompressionMiddleware {
 
 /// Compress bytes using gzip.
 pub(crate) fn compress_gzip(data: &[u8], level: u32) -> Result<Vec<u8>, std::io::Error> {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::io::Write;
 
     let mut encoder = GzEncoder::new(Vec::new(), Compression::new(level));
