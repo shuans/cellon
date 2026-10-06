@@ -14,7 +14,14 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Python bindings (minimum Python 3.12)
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312"] }
+# `extension-module` is deliberately NOT enabled here. It tells pyo3 not to
+# link libpython, which is right for a shipped extension but makes the
+# `cargo test` binary fail to link (`undefined symbol: PyBytes_AsString`, ...),
+# so the Rust unit tests could never run. Wheel builds still get it: maturin
+# adds it via `[tool.maturin] features = ["pyo3/extension-module"]` in
+# pyproject.toml, which applies to `maturin build`/`develop` and to the
+# maturin-action steps in ci.yml / publish.yml.
+pyo3 = { version = "0.29", features = ["abi3-py312"] }
 
 # Tokio-backed Python async event loop (drives async def handlers via Tokio, not asyncio)
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
