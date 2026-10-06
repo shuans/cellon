@@ -621,6 +621,11 @@ mod tests {
         ws.send_binary(vec![9, 8, 7]).unwrap();
         ws.send(WebSocketMessage::from_text("third")).unwrap();
 
+        // The stub is a loopback: send and recv share one queue, so every
+        // recv consumes the message (regression: the test drained the queue
+        // then asserted the 3 messages were still queued).
+        assert_eq!(ws.get_queued_messages().len(), 3);
+
         let first = ws.recv().unwrap();
         assert!(first.is_text());
         assert_eq!(first.text, Some("hello".to_string()));
@@ -633,7 +638,7 @@ mod tests {
         assert_eq!(third.text, Some("third".to_string()));
 
         assert!(ws.recv().is_none());
-        assert_eq!(ws.get_queued_messages().len(), 3);
+        assert!(ws.get_queued_messages().is_empty());
     }
 
     #[test]

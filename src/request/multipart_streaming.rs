@@ -143,9 +143,10 @@ impl StreamingMultipart {
                     if !self.parse_body() {
                         break;
                     }
-                    // After body, we either go to headers (next part) or done
-                    if self.check_final_boundary() {
-                        self.state = ParserState::Done;
+                    // parse_body sets Done itself when it consumed the
+                    // terminating boundary ("--boundary--"); otherwise the
+                    // next part's headers follow.
+                    if self.state == ParserState::Done {
                         break;
                     }
                     self.state = ParserState::Headers;
@@ -229,8 +230,12 @@ impl StreamingMultipart {
 
             // Skip trailing CRLF or check for final boundary
             if self.buffer.starts_with(b"--") {
-                // This is the final boundary
+                // Close delimiter ("--boundary--"): body is complete and no
+                // further parts follow. (Regression: this used to consume the
+                // "--" without signalling Done, leaving the state machine stuck
+                // in Body so `is_complete()` never turned true.)
                 self.buffer.advance(2);
+                self.state = ParserState::Done;
             } else if self.buffer.starts_with(b"\r\n") {
                 self.buffer.advance(2);
             }
@@ -256,11 +261,6 @@ impl StreamingMultipart {
     /// Find end of headers (CRLF CRLF).
     fn find_header_end(&self) -> Option<usize> {
         self.buffer.windows(4).position(|w| w == b"\r\n\r\n")
-    }
-
-    /// Check for final boundary.
-    fn check_final_boundary(&self) -> bool {
-        self.buffer.starts_with(b"--")
     }
 
     /// Get all parsed parts.

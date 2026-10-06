@@ -288,9 +288,17 @@ impl DependencyContainer {
     pub fn get<T: Clone + Send + Sync + 'static>(&self, request: &Request) -> DependencyResult<T> {
         let type_id = TypeId::of::<T>();
 
-        // Check overrides first (for testing)
+        // Check overrides first (for testing).
+        // NOTE: deliberately bypasses the singleton cache — a value cached
+        // before `override_provider` was called would otherwise shadow the
+        // override (and the override itself would pollute the cache), making
+        // `clear_override` appear to do nothing.
         if let Some(provider) = self.overrides.read().get(&type_id) {
-            return self.resolve_provider::<T>(provider.as_ref(), request);
+            let value = provider.provide(request, self);
+            let downcasted = value.downcast::<T>().map_err(|_| {
+                DependencyError::TypeMismatch("Override provider type mismatch".to_string())
+            })?;
+            return Ok(*downcasted);
         }
 
         // Get the provider

@@ -10,6 +10,7 @@
 //! - Status code mapping
 
 use super::{Middleware, MiddlewareAction, MiddlewareResult};
+use crate::error::AppError;
 use crate::request::Request;
 use crate::response::Response;
 
@@ -19,6 +20,30 @@ use crate::response::Response;
 
 /// Exception handler result.
 pub type ExceptionResult = Result<Response, Box<dyn std::error::Error + Send + Sync>>;
+
+/// Decline an exception: this handler does not claim it, so the chain tries
+/// the next handler.
+///
+/// Built-in handlers used to answer for *every* exception type, which let the
+/// highest-priority handler (`NotFoundErrorHandler`, priority -40) mask every
+/// unhandled exception as 404 Not Found instead of 500 Internal Server Error.
+fn declined() -> ExceptionResult {
+    Err("exception not claimed by this handler".into())
+}
+
+/// Check that the exception is an [`AppError`] the handler can claim.
+/// Returns `Err(declined)` when the exception is not a claimed variant.
+macro_rules! claim_variant {
+    ($context:expr, $($variant:pat_param => $binding:expr),+ $(,)?) => {
+        match $context.exception.downcast_ref::<AppError>() {
+            Some(app) => match app {
+                $($variant => $binding,)+
+                _ => return declined(),
+            },
+            None => return declined(),
+        }
+    };
+}
 
 /// Exception context for handlers.
 pub struct ExceptionContext {
@@ -116,13 +141,18 @@ impl ValidationErrorHandler {
 
 impl ExceptionHandler for ValidationErrorHandler {
     fn handle(&self, context: &mut ExceptionContext) -> ExceptionResult {
-        let mut response = Response::new(400);
+        let (detail, status) = claim_variant!(context,
+            AppError::Validation { message, .. } => (message.clone(), 422u16),
+            AppError::BadRequest(msg) => (msg.clone(), 400u16),
+        );
+
+        let mut response = Response::new(status);
 
         let error_response = serde_json::json!({
             "type": "validation_error",
             "title": "Validation Error",
-            "detail": context.exception.to_string(),
-            "status": 400,
+            "detail": detail,
+            "status": status,
             "instance": context.request.path.clone(),
         });
 
@@ -154,12 +184,16 @@ impl AuthenticationErrorHandler {
 
 impl ExceptionHandler for AuthenticationErrorHandler {
     fn handle(&self, context: &mut ExceptionContext) -> ExceptionResult {
+        let detail = claim_variant!(context,
+            AppError::Unauthorized(msg) => msg.clone(),
+        );
+
         let mut response = Response::new(401);
 
         let error_response = serde_json::json!({
             "type": "authentication_error",
             "title": "Authentication Required",
-            "detail": context.exception.to_string(),
+            "detail": detail,
             "status": 401,
             "instance": context.request.path.clone(),
         });
@@ -193,12 +227,16 @@ impl AuthorizationErrorHandler {
 
 impl ExceptionHandler for AuthorizationErrorHandler {
     fn handle(&self, context: &mut ExceptionContext) -> ExceptionResult {
+        let detail = claim_variant!(context,
+            AppError::Forbidden(msg) => msg.clone(),
+        );
+
         let mut response = Response::new(403);
 
         let error_response = serde_json::json!({
             "type": "authorization_error",
             "title": "Forbidden",
-            "detail": context.exception.to_string(),
+            "detail": detail,
             "status": 403,
             "instance": context.request.path.clone(),
         });
@@ -231,12 +269,16 @@ impl NotFoundErrorHandler {
 
 impl ExceptionHandler for NotFoundErrorHandler {
     fn handle(&self, context: &mut ExceptionContext) -> ExceptionResult {
+        let detail = claim_variant!(context,
+            AppError::NotFound(msg) => msg.clone(),
+        );
+
         let mut response = Response::new(404);
 
         let error_response = serde_json::json!({
             "type": "not_found_error",
             "title": "Not Found",
-            "detail": context.exception.to_string(),
+            "detail": detail,
             "status": 404,
             "instance": context.request.path.clone(),
         });
@@ -269,7 +311,16 @@ impl InternalServerErrorHandler {
 
 impl ExceptionHandler for InternalServerErrorHandler {
     fn handle(&self, context: &mut ExceptionContext) -> ExceptionResult {
-        let mut response = Response::new(self.config.default_status_code);
+        // Lowest-priority catch-all: it only sees exceptions no dedicated
+        // handler claimed. An `AppError` that slipped past the specialized
+        // handlers still knows its own HTTP status; anything else is a 500.
+        let status = context
+            .exception
+            .downcast_ref::<AppError>()
+            .map(AppError::status_code)
+            .unwrap_or(self.config.default_status_code);
+
+        let mut response = Response::new(status);
 
         let mut error_response = serde_json::json!({
             "type": "internal_server_error",
@@ -279,7 +330,7 @@ impl ExceptionHandler for InternalServerErrorHandler {
             } else {
                 self.config.internal_error_message.clone()
             },
-            "status": self.config.default_status_code,
+            "status": status,
             "instance": context.request.path.clone(),
         });
 
@@ -543,22 +594,38 @@ mod tests {
     fn test_validation_error_handler() {
         let handler = ValidationErrorHandler::new(ExceptionHandlerConfig::default());
         let request = Request::default();
-        let exception = Box::new(TestError("Invalid input".to_string()));
+        let exception: Box<dyn std::error::Error + Send + Sync> = Box::new(AppError::Validation {
+            message: "Invalid input".to_string(),
+            errors: Vec::new(),
+        });
 
         let mut context = ExceptionContext::new(request, exception);
         let response = handler.handle(&mut context).unwrap();
 
-        assert_eq!(response.status, 400);
+        assert_eq!(response.status, 422);
         let body = String::from_utf8(response.body()).unwrap();
         assert!(body.contains("validation_error"));
         assert!(body.contains("Validation Error"));
+        assert!(body.contains("Invalid input"));
+    }
+
+    #[test]
+    fn test_validation_error_handler_declines_other_exceptions() {
+        let handler = ValidationErrorHandler::new(ExceptionHandlerConfig::default());
+        let request = Request::default();
+        let exception: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(AppError::NotFound("nope".to_string()));
+
+        let mut context = ExceptionContext::new(request, exception);
+        assert!(handler.handle(&mut context).is_err());
     }
 
     #[test]
     fn test_authentication_error_handler() {
         let handler = AuthenticationErrorHandler::new(ExceptionHandlerConfig::default());
         let request = Request::default();
-        let exception = Box::new(TestError("Not authenticated".to_string()));
+        let exception: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(AppError::Unauthorized("Not authenticated".to_string()));
 
         let mut context = ExceptionContext::new(request, exception);
         let response = handler.handle(&mut context).unwrap();
@@ -571,7 +638,8 @@ mod tests {
     fn test_authorization_error_handler() {
         let handler = AuthorizationErrorHandler::new(ExceptionHandlerConfig::default());
         let request = Request::default();
-        let exception = Box::new(TestError("Forbidden".to_string()));
+        let exception: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(AppError::Forbidden("Forbidden".to_string()));
 
         let mut context = ExceptionContext::new(request, exception);
         let response = handler.handle(&mut context).unwrap();
@@ -583,7 +651,8 @@ mod tests {
     fn test_not_found_error_handler() {
         let handler = NotFoundErrorHandler::new(ExceptionHandlerConfig::default());
         let request = Request::default();
-        let exception = Box::new(TestError("Not found".to_string()));
+        let exception: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(AppError::NotFound("Not found".to_string()));
 
         let mut context = ExceptionContext::new(request, exception);
         let response = handler.handle(&mut context).unwrap();
@@ -625,13 +694,22 @@ mod tests {
     #[test]
     fn test_exception_handler_middleware() {
         let middleware = ExceptionHandlerMiddleware::new();
+
+        // Unknown exception type: no dedicated handler claims it, so the
+        // catch-all (500) must win — regression: NotFoundErrorHandler used to
+        // answer for every exception type and masked this as 404.
         let request = Request::default();
-        let exception = Box::new(TestError("Test exception".to_string()));
-
+        let exception: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(TestError("Test exception".to_string()));
         let response = middleware.handle_exception(request, exception);
-
-        // Should be handled by internal server error handler
         assert_eq!(response.status, 500);
+
+        // Typed AppError still routes to its dedicated handler.
+        let request = Request::default();
+        let exception: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(AppError::NotFound("missing".to_string()));
+        let response = middleware.handle_exception(request, exception);
+        assert_eq!(response.status, 404);
     }
 
     #[test]

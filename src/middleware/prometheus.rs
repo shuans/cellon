@@ -522,6 +522,14 @@ mod tests {
     fn test_metrics_encode() {
         let config = PrometheusConfig::default();
         let metrics = PrometheusMetrics::new(&config).unwrap();
+
+        // A fresh counter has no samples and prometheus's TextEncoder omits
+        // empty metric families entirely — record one first.
+        metrics
+            .http_requests_total
+            .with_label_values(&["GET", "/test", "200"])
+            .inc();
+
         let encoded = metrics.encode();
         assert!(encoded.is_ok());
 

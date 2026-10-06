@@ -55,13 +55,21 @@ impl CachedResponse {
     }
 
     /// Get remaining TTL in seconds.
+    ///
+    /// Rounds **up**: a freshly cached entry with `ttl = 1` must report `1`,
+    /// not the `0` that truncation yields ~1s out of every second of its life
+    /// (which also leaks a stale `max-age=0` into `Cache-Control`).
     pub fn remaining_ttl(&self) -> u64 {
         if self.is_expired() {
             0
         } else {
             let now = SystemTime::now();
             let expiry = self.cached_at + Duration::from_secs(self.ttl);
-            expiry.duration_since(now).unwrap_or_default().as_secs()
+            let remaining = expiry
+                .duration_since(now)
+                .unwrap_or_default()
+                .as_secs_f64();
+            remaining.ceil() as u64
         }
     }
 }

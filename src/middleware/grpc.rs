@@ -650,11 +650,14 @@ impl GrpcServer {
             .read()
             .values()
             .map(|service| {
+                // "helloworld.Greeter" → package "helloworld", service "Greeter".
+                let package = service.name.split('.').next().unwrap_or(&service.name);
+                let svc_name = service.name.rsplit('.').next().unwrap_or(&service.name);
                 json!({
                     "name": service.name,
-                    "package": service.name.rsplit('.').next().unwrap_or(""),
+                    "package": package,
                     "service": [{
-                        "name": service.name.rsplit('.').next().unwrap_or(&service.name),
+                        "name": svc_name,
                         "method": service.methods.iter().map(|m| json!({
                             "name": m.name,
                             "input_type": format!(".{}", m.input_type),
