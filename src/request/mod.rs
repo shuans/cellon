@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::json::{json_to_python, parse_json, python_to_json};
+use crate::json::{json_to_python, parse_json_bytes, python_to_json};
 use crate::multipart::parse_urlencoded;
 
 pub use multipart_streaming::{MultipartPart, StreamingMultipart};
@@ -136,17 +136,22 @@ impl Request {
     /// Get the request body as a string (cached).
     pub fn text(&self) -> PyResult<String> {
         let mut cache = self.lazy_cache.text_parsed.write();
-        if let Some(ref result) = *cache {
-            return result
-                .clone()
-                .map_err(pyo3::exceptions::PyValueError::new_err);
+        if let Some(cached) = cache.as_ref() {
+            return cached
+                .as_ref()
+                .map(|text| text.clone())
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.clone()));
         }
 
+        // PERF: only one copy is made into the cache (plus the returned `String`,
+        // which the signature requires) instead of cloning the result twice.
         let result = String::from_utf8(self.body.clone()).map_err(|e| e.to_string());
-        let return_value = result.clone();
+        let return_value = match result.as_ref() {
+            Ok(text) => text.clone(),
+            Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e.clone())),
+        };
         *cache = Some(result);
-
-        return_value.map_err(pyo3::exceptions::PyValueError::new_err)
+        Ok(return_value)
     }
 
     /// Get the request body as bytes.
@@ -155,43 +160,52 @@ impl Request {
     }
 
     /// Parse the request body as JSON using SIMD acceleration (cached).
+    ///
+    /// PERF: the SIMD parser reads the body bytes directly (no `String`
+    /// round-trip and no second copy), and a repeat call converts the cached
+    /// value to Python *by reference* — previously every call deep-cloned the
+    /// parsed document (allocation + copy of every key, value and nested node).
     pub fn json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let mut cache = self.lazy_cache.json_parsed.write();
 
-        let value = if let Some(ref result) = *cache {
-            result
-                .clone()
-                .map_err(pyo3::exceptions::PyValueError::new_err)?
-        } else {
-            let text = String::from_utf8(self.body.clone())
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-
-            let result = parse_json(&text);
-            let value = result
-                .clone()
+        if let Some(cached) = cache.as_ref() {
+            let value = cached
+                .as_ref()
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.clone()))?;
-            *cache = Some(result);
-            value
-        };
+            return json_to_python(py, value);
+        }
 
-        json_to_python(py, &value)
+        // simd-json parses in place, so it needs a mutable buffer; copy the raw
+        // body instead of first materializing a `String` from a cloned body.
+        let mut body = self.body.clone();
+        let parsed = parse_json_bytes(&mut body);
+
+        let py_value = match parsed.as_ref() {
+            Ok(value) => json_to_python(py, value)?,
+            Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e.clone())),
+        };
+        *cache = Some(parsed);
+        Ok(py_value)
     }
 
     /// Parse the request body as form data (cached).
     pub fn form(&self) -> PyResult<HashMap<String, String>> {
         let mut cache = self.lazy_cache.form_parsed.write();
 
-        if let Some(ref result) = *cache {
-            return result
-                .clone()
-                .map_err(pyo3::exceptions::PyValueError::new_err);
+        if let Some(cached) = cache.as_ref() {
+            return cached
+                .as_ref()
+                .map(|form| form.clone())
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.clone()));
         }
 
         let result = parse_urlencoded(&self.body);
-        let return_value = result.clone();
+        let return_value = match result.as_ref() {
+            Ok(form) => form.clone(),
+            Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e.clone())),
+        };
         *cache = Some(result);
-
-        return_value.map_err(pyo3::exceptions::PyValueError::new_err)
+        Ok(return_value)
     }
 
     /// Get the content type.

@@ -372,7 +372,19 @@ impl Response {
     /// Strips CR and LF characters from values to prevent CRLF injection / HTTP response splitting.
     #[inline]
     pub fn set_header(&mut self, key: &str, value: &str) {
-        // Strip control characters (CR, LF, null) to prevent header injection
+        // PERF: header values almost never contain control characters, so check
+        // first and skip the `collect()` allocation in the common case. Only a
+        // value that actually needs sanitizing pays for the rebuild.
+        if !value
+            .as_bytes()
+            .iter()
+            .any(|&b| matches!(b, b'\r' | b'\n' | 0))
+        {
+            self.headers.insert(key.to_string(), value.to_string());
+            return;
+        }
+
+        // Strip control characters (CR, LF, null) to prevent header injection.
         let sanitized: String = value
             .chars()
             .filter(|c| *c != '\r' && *c != '\n' && *c != '\0')

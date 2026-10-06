@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use crate::json::parse_json;
 
@@ -50,6 +51,29 @@ impl std::fmt::Display for ParamError {
 }
 
 impl std::error::Error for ParamError {}
+
+// ============================================================================
+// Shared Patterns
+// ============================================================================
+//
+// PERF: these live in `LazyLock` statics. The previous implementation compiled
+// the regex inside the accessor, so every `get_uuid()` call paid a full regex
+// compilation (tens of microseconds) for a single match test.
+static UUID_PATTERN: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    )
+    .expect("UUID pattern is a valid regex")
+});
+
+static EMAIL_PATTERN: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+        .expect("email pattern is a valid regex")
+});
+
+static URL_PATTERN: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^https?://[^\s/$.?#].[^\s]*$").expect("URL pattern is a valid regex")
+});
 
 // ============================================================================
 // Typed Parameters
@@ -148,12 +172,8 @@ impl TypedParams {
     /// Get UUID parameter.
     pub fn get_uuid(&self, key: &str) -> Option<String> {
         self.raw.get(key).and_then(|v| {
-            // Validate UUID format
-            let uuid_regex = regex::Regex::new(
-                r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-            )
-            .ok()?;
-            if uuid_regex.is_match(v) {
+            // PERF: pattern is a static — only the match runs per call.
+            if UUID_PATTERN.is_match(v) {
                 Some(v.clone())
             } else {
                 None
@@ -376,9 +396,8 @@ impl Validators {
 
     /// Validate email format.
     pub fn email() -> impl Fn(&String) -> Result<(), String> {
-        let regex = regex::Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
         move |value| {
-            if regex.is_match(value) {
+            if EMAIL_PATTERN.is_match(value) {
                 Ok(())
             } else {
                 Err("Invalid email format".to_string())
@@ -388,9 +407,8 @@ impl Validators {
 
     /// Validate URL format.
     pub fn url() -> impl Fn(&String) -> Result<(), String> {
-        let regex = regex::Regex::new(r"^https?://[^\s/$.?#].[^\s]*$").unwrap();
         move |value| {
-            if regex.is_match(value) {
+            if URL_PATTERN.is_match(value) {
                 Ok(())
             } else {
                 Err("Invalid URL format".to_string())

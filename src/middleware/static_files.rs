@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{Middleware, MiddlewareAction, MiddlewareResult};
@@ -262,27 +263,60 @@ impl StaticFilesConfig {
 /// Static files middleware.
 pub struct StaticFilesMiddleware {
     config: StaticFilesConfig,
+    /// Canonical form of `config.root_dir`. Resolved at most once and then
+    /// reused for every request — `canonicalize()` is a syscall per path
+    /// component. Resolved lazily so a root directory created *after* the
+    /// middleware was registered still works.
+    canonical_root: OnceLock<PathBuf>,
 }
 
 impl StaticFilesMiddleware {
     /// Create new static files middleware.
     pub fn new(url_path: &str, root_dir: &str) -> Self {
-        Self {
-            config: StaticFilesConfig::new(url_path, root_dir),
-        }
+        Self::with_config(StaticFilesConfig::new(url_path, root_dir))
     }
 
     /// Create with config.
     pub fn with_config(config: StaticFilesConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            canonical_root: OnceLock::new(),
+        }
+    }
+
+    /// PERF: canonical root, computed at most once per process.
+    fn canonical_root(&self) -> Option<&Path> {
+        if let Some(root) = self.canonical_root.get() {
+            return Some(root.as_path());
+        }
+        let canonical = self.config.root_dir.canonicalize().ok()?;
+        // A concurrent request may have stored an equivalent path first; either
+        // value satisfies the containment check below.
+        let _ = self.canonical_root.set(canonical);
+        self.canonical_root.get().map(|root| root.as_path())
+    }
+
+    /// True when `path` is the configured URL prefix or lies below it.
+    /// PERF: allocation-free replacement for building `format!("{}/", url_path)`
+    /// on every request.
+    #[inline]
+    fn matches_url_prefix(&self, path: &str) -> bool {
+        let prefix = self.config.url_path.as_str();
+        // Preserve the previous behaviour for an empty prefix, which matched
+        // nothing rather than exposing the whole root directory.
+        if prefix.is_empty() {
+            return false;
+        }
+        match path.strip_prefix(prefix) {
+            Some(rest) => rest.is_empty() || rest.starts_with('/'),
+            None => false,
+        }
     }
 
     /// Resolve file path from request path.
     fn resolve_path(&self, request_path: &str) -> Option<PathBuf> {
         // Check if request matches URL path prefix
-        if request_path != self.config.url_path
-            && !request_path.starts_with(&format!("{}/", self.config.url_path))
-        {
+        if !self.matches_url_prefix(request_path) {
             return None;
         }
 
@@ -338,7 +372,7 @@ impl StaticFilesMiddleware {
         // Canonicalize to prevent traversal via symlinks or other tricks.
         // The security invariant is: canonical(requested) must be within canonical(root).
         let canonical = path.canonicalize().ok()?;
-        let root_canonical = self.config.root_dir.canonicalize().ok()?;
+        let root_canonical = self.canonical_root()?;
 
         // Verify path is within root.
         // On Windows, canonicalize() may return UNC paths (\\?\C:\...) for one path
@@ -361,7 +395,7 @@ impl StaticFilesMiddleware {
         }
         #[cfg(not(windows))]
         {
-            if !canonical.starts_with(&root_canonical) {
+            if !canonical.starts_with(root_canonical) {
                 return None;
             }
         }
@@ -576,9 +610,7 @@ impl Middleware for StaticFilesMiddleware {
         }
 
         // Check if path matches
-        if request.path != self.config.url_path
-            && !request.path.starts_with(&format!("{}/", self.config.url_path))
-        {
+        if !self.matches_url_prefix(&request.path) {
             return Ok(MiddlewareAction::Continue);
         }
 
@@ -597,9 +629,7 @@ impl Middleware for StaticFilesMiddleware {
     }
 
     fn serves_unrouted(&self, method: &str, path: &str) -> bool {
-        (method == "GET" || method == "HEAD")
-            && (path == self.config.url_path
-                || path.starts_with(&format!("{}/", self.config.url_path)))
+        (method == "GET" || method == "HEAD") && self.matches_url_prefix(path)
     }
 
     fn name(&self) -> &str {
@@ -607,13 +637,15 @@ impl Middleware for StaticFilesMiddleware {
     }
 }
 
-/// Format SystemTime as HTTP date.
+/// Format SystemTime as an RFC 7231 HTTP-date (`Sun, 06 Nov 1994 08:49:37 GMT`).
+///
+/// This previously emitted raw epoch seconds, which is not a valid HTTP-date:
+/// clients echoed the malformed value back in `If-Modified-Since` and the string
+/// comparison below could never match, so the 304 path was effectively dead.
+/// Second resolution is correct here — it is also what clients send back.
 fn format_http_date(time: SystemTime) -> String {
-    let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let secs = duration.as_secs();
-    // Simple RFC 7231 date format
-    // In production, use proper HTTP date formatting
-    format!("{secs}")
+    let dt: chrono::DateTime<chrono::Utc> = time.into();
+    dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
 }
 
 #[cfg(test)]

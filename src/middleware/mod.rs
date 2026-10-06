@@ -342,7 +342,10 @@ struct AsyncMiddlewareEntry {
 #[derive(Clone)]
 pub struct MiddlewareChain {
     sync_middlewares: Arc<RwLock<Vec<MiddlewareEntry>>>,
-    async_middlewares: Arc<RwLock<Vec<AsyncMiddlewareEntry>>>,
+    /// Immutable list inside the lock: async execution clones this `Arc`
+    /// (one atomic increment) instead of copying the entries into a fresh
+    /// `Vec` on every request. Mutation replaces the whole `Arc`.
+    async_middlewares: Arc<RwLock<Arc<Vec<AsyncMiddlewareEntry>>>>,
 }
 
 impl MiddlewareChain {
@@ -350,7 +353,7 @@ impl MiddlewareChain {
     pub fn new() -> Self {
         MiddlewareChain {
             sync_middlewares: Arc::new(RwLock::new(Vec::new())),
-            async_middlewares: Arc::new(RwLock::new(Vec::new())),
+            async_middlewares: Arc::new(RwLock::new(Arc::new(Vec::new()))),
         }
     }
 
@@ -375,9 +378,13 @@ impl MiddlewareChain {
             priority,
         };
 
+        // Copy-on-write: registration happens at startup, so replacing the list
+        // is fine and the request path never has to allocate.
         let mut middlewares = self.async_middlewares.write();
-        middlewares.push(entry);
-        middlewares.sort_by_key(|e| e.priority);
+        let mut next = (**middlewares).clone();
+        next.push(entry);
+        next.sort_by_key(|e| e.priority);
+        *middlewares = Arc::new(next);
     }
 
     /// Execute all sync middleware before handlers.
@@ -451,14 +458,13 @@ impl MiddlewareChain {
 
     /// Async counterpart of `execute_before_unrouted` (e.g. a GraphQL endpoint).
     pub async fn execute_before_async_unrouted(&self, request: &mut Request) -> MiddlewareResult {
-        let entries: Vec<Arc<dyn AsyncMiddleware>> = {
-            let middlewares = self.async_middlewares.read();
-            middlewares
-                .iter()
-                .filter(|e| e.middleware.serves_unrouted(&request.method, &request.path))
-                .map(|e| e.middleware.clone())
-                .collect()
-        };
+        let middlewares = Arc::clone(&*self.async_middlewares.read());
+        let entries: Vec<Arc<dyn AsyncMiddleware>> = middlewares
+            .iter()
+            .filter(|e| e.middleware.serves_unrouted(&request.method, &request.path))
+            .map(|e| e.middleware.clone())
+            .collect();
+        drop(middlewares);
         for middleware in &entries {
             match middleware.before_async(request).await? {
                 MiddlewareAction::Continue => continue,
@@ -469,15 +475,13 @@ impl MiddlewareChain {
     }
 
     /// Execute all async middleware before handlers.
-    /// PERF: Avoid cloning the entire vec - hold read lock only to get Arc refs.
+    /// PERF: Cloning the `Arc<Vec<_>>` is a single atomic increment — no Vec
+    /// allocation and no per-entry refcount churn on the request path.
     pub async fn execute_before_async(&self, request: &mut Request) -> MiddlewareResult {
-        // PERF: Collect Arc references under lock, then release lock before await
-        let entries: Vec<Arc<dyn AsyncMiddleware>> = {
-            let middlewares = self.async_middlewares.read();
-            middlewares.iter().map(|e| e.middleware.clone()).collect()
-        };
-        for middleware in &entries {
-            match middleware.before_async(request).await? {
+        // PERF: Snapshot the list, then release the lock before awaiting.
+        let entries = Arc::clone(&*self.async_middlewares.read());
+        for entry in entries.iter() {
+            match entry.middleware.before_async(request).await? {
                 MiddlewareAction::Continue => continue,
                 action @ MiddlewareAction::Stop(_) => return Ok(action),
             }
@@ -486,22 +490,15 @@ impl MiddlewareChain {
     }
 
     /// Execute all async middleware after handlers (in reverse order).
-    /// PERF: Avoid cloning the entire vec - hold read lock only to get Arc refs.
+    /// PERF: Same as `execute_before_async` — one atomic increment, no Vec alloc.
     pub async fn execute_after_async(
         &self,
         request: &Request,
         response: &mut Response,
     ) -> MiddlewareResult {
-        let entries: Vec<Arc<dyn AsyncMiddleware>> = {
-            let middlewares = self.async_middlewares.read();
-            middlewares
-                .iter()
-                .rev()
-                .map(|e| e.middleware.clone())
-                .collect()
-        };
-        for middleware in &entries {
-            match middleware.after_async(request, response).await? {
+        let entries = Arc::clone(&*self.async_middlewares.read());
+        for entry in entries.iter().rev() {
+            match entry.middleware.after_async(request, response).await? {
                 MiddlewareAction::Continue => continue,
                 action @ MiddlewareAction::Stop(_) => return Ok(action),
             }

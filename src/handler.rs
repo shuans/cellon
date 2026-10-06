@@ -54,6 +54,18 @@ pub const DEFAULT_OFFLOAD_THRESHOLD_US: u64 = 1_000;
 /// Must be > 1 so one-time warmup on the first call cannot promote a cheap handler.
 const SLOW_STREAK_TO_OFFLOAD: u8 = 2;
 
+/// Outcome of the inline (non-offloaded) call phase.
+///
+/// A sync handler has already been called *and* serialized by the time this is
+/// returned, so the common path needs a single GIL acquisition instead of one to
+/// call plus another to serialize.
+enum InlineOutcome {
+    /// Sync handler: serialization already happened under the same GIL.
+    Sync(Result<HandlerResult, HandlerError>, Duration),
+    /// Async handler: the coroutine still has to be driven.
+    Coroutine(Py<PyAny>, Duration),
+}
+
 /// Result from handler invocation - either pre-serialized JSON bytes or a serde_json::Value.
 /// PERF: The bytes variant skips the intermediate serde_json::Value allocation for the common
 /// case where a handler returns a plain dict (not a Response object).
@@ -182,14 +194,15 @@ impl HandlerRegistry {
     /// 1. Caches async detection per handler (avoid inspect.iscoroutine every call)
     /// 2. Caches DI parameter resolution per handler (avoid inspect.signature every call)
     /// 3. Skips DI entirely when no singletons registered (atomic check, no lock)
-    /// 4. Three-phase GIL acquisition: call → await (GIL free) → serialize
-    /// 5. Returns HandlerResult::JsonBytes for common dict returns (skips serde_json::Value)
+    /// 4. Returns HandlerResult::JsonBytes for common dict returns (skips serde_json::Value)
     ///
     /// GIL RELEASE ARCHITECTURE:
-    ///   Phase 1 (GIL):    Call Python handler, do DI resolution, detect coroutine.
-    ///   Phase 2 (no GIL): pyo3-asyncio converts coroutine → Rust Future; Tokio awaits it.
-    ///                      GIL is released during Python I/O waits inside the coroutine.
-    ///   Phase 3 (GIL):    Serialize result back to HandlerResult.
+    ///   Sync handler:  one GIL acquisition — call + serialize happen together, so
+    ///                  there is no second GIL round-trip on the hot path.
+    ///   Async handler: Phase 1 (GIL) calls the handler and detects the coroutine;
+    ///                  Phase 2 (no GIL) drives it on the persistent asyncio loop,
+    ///                  releasing the GIL during Python I/O waits; Phase 3 (GIL)
+    ///                  serializes the result.
     pub async fn invoke_async(
         &self,
         handler_id: usize,
@@ -248,41 +261,55 @@ impl HandlerRegistry {
                 .map_err(|e| HandlerError::Message(format!("Handler channel error: {e}")))?;
         }
 
-        // ── Phase 1 (GIL): call handler, detect coroutine ──────────────────────
+        // ── Phase 1 (GIL): call handler, detect coroutine, serialize sync results ─
         let threshold = self.offload_threshold_us.load(Ordering::Relaxed);
         let adaptive = policy == POLICY_AUTO && threshold != u64::MAX;
-        let (raw_result, is_coroutine, call_time) = Python::attach(|py| {
-            call_handler(
+        let result = Python::attach(|py| {
+            let (raw_result, is_coroutine, call_time) = call_handler(
                 py,
                 &meta,
                 request,
                 &dependency_container,
                 has_dependencies,
                 adaptive,
-            )
+            )?;
+
+            // HOT PATH: a sync handler is already done, so serialize it while we
+            // still hold the GIL — re-acquiring it (and re-entering the
+            // interpreter) for a second, serialization-only pass costs an extra
+            // GIL round-trip on every request.
+            Ok::<InlineOutcome, HandlerError>(if is_coroutine {
+                InlineOutcome::Coroutine(raw_result, call_time)
+            } else {
+                InlineOutcome::Sync(serialize(py, raw_result.bind(py)), call_time)
+            })
         })?;
 
-        // Adaptive promotion: a sync handler that repeatedly exceeds the threshold is
-        // blocking, so every subsequent call goes to the pool. One-way, so at most
-        // the first couple of calls pay the inline cost. Async handlers are exempt —
-        // `call_time` only covers building the coroutine, not awaiting it.
-        if adaptive && !is_coroutine {
-            if call_time.as_micros() as u64 >= threshold {
-                if meta.slow_streak.fetch_add(1, Ordering::Relaxed) + 1 >= SLOW_STREAK_TO_OFFLOAD {
-                    meta.offload.store(true, Ordering::Relaxed);
+        // HOT PATH: a sync handler is already called *and* serialized — return it
+        // rather than awaiting another async fn (no extra state machine).
+        let serialized = match result {
+            InlineOutcome::Sync(serialized, call_time) => {
+                // Adaptive promotion: a sync handler that repeatedly exceeds the
+                // threshold is blocking, so every subsequent call goes to the pool.
+                // One-way, so at most the first couple of calls pay the inline cost.
+                if adaptive {
+                    if call_time.as_micros() as u64 >= threshold {
+                        if meta.slow_streak.fetch_add(1, Ordering::Relaxed) + 1
+                            >= SLOW_STREAK_TO_OFFLOAD
+                        {
+                            meta.offload.store(true, Ordering::Relaxed);
+                        }
+                    } else {
+                        meta.slow_streak.store(0, Ordering::Relaxed);
+                    }
                 }
-            } else {
-                meta.slow_streak.store(0, Ordering::Relaxed);
+                serialized
             }
-        }
-
-        // HOT PATH: a sync handler is already done — serialize here rather than
-        // awaiting another async fn, so the common case has no extra state machine.
-        if !is_coroutine {
-            return Python::attach(|py| serialize(py, raw_result.bind(py)));
-        }
-
-        drive_and_serialize(raw_result).await
+            // Async handlers are exempt: `call_time` only covers building the
+            // coroutine, not awaiting it.
+            InlineOutcome::Coroutine(coro, _) => return drive_and_serialize(coro).await,
+        };
+        serialized
     }
 
     /// Invoke a handler synchronously (legacy method for compatibility).
