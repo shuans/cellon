@@ -580,18 +580,21 @@ fn parse_range_header(header: &str, file_size: u64) -> Result<(u64, u64), String
         return Err("Invalid range format".to_string());
     }
 
-    let start = if parts[0].is_empty() {
-        // Suffix range: -500 means last 500 bytes
+    // Suffix range ("-500" = last 500 bytes): `parts[1]` is a *length*, not an
+    // end offset, so the end is always `file_size - 1` (regression: the suffix
+    // was parsed as the end offset, so `start > end` rejected every valid
+    // suffix range with "Range not satisfiable").
+    let (start, end) = if parts[0].is_empty() {
         let suffix: u64 = parts[1].parse().map_err(|_| "Invalid suffix range")?;
-        file_size.saturating_sub(suffix)
+        (file_size.saturating_sub(suffix), file_size - 1)
     } else {
-        parts[0].parse().map_err(|_| "Invalid start range")?
-    };
-
-    let end = if parts[1].is_empty() {
-        file_size - 1
-    } else {
-        parts[1].parse().map_err(|_| "Invalid end range")?
+        let start: u64 = parts[0].parse().map_err(|_| "Invalid start range")?;
+        let end = if parts[1].is_empty() {
+            file_size - 1
+        } else {
+            parts[1].parse().map_err(|_| "Invalid end range")?
+        };
+        (start, end)
     };
 
     if start > end || end >= file_size {
@@ -676,6 +679,15 @@ mod tests {
     fn test_parse_range_header_out_of_bounds() {
         assert!(parse_range_header("bytes=0-1000", 1000).is_err());
         assert!(parse_range_header("bytes=1000-1001", 1000).is_err());
+    }
+
+    #[test]
+    fn test_parse_range_header_suffix_ranges() {
+        // Suffix larger than the file serves the whole file (RFC 7233 §2.1).
+        assert_eq!(parse_range_header("bytes=-2000", 1000), Ok((0, 999)));
+        // A suffix-length of 0 is unsatisfiable.
+        assert!(parse_range_header("bytes=-0", 1000).is_err());
+        assert_eq!(parse_range_header("bytes=-1", 1000), Ok((999, 999)));
     }
 
     #[test]
