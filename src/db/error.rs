@@ -224,7 +224,11 @@ pub struct BindRangeError {
 
 impl fmt::Display for BindRangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "value {} is out of range for Postgres type {}", self.value, self.target)
+        write!(
+            f,
+            "value {} is out of range for Postgres type {}",
+            self.value, self.target
+        )
     }
 }
 
@@ -288,7 +292,10 @@ impl PgError {
             };
         }
         let text = error.to_string();
-        if let Some(range) = error.source().and_then(|s| s.downcast_ref::<BindRangeError>()) {
+        if let Some(range) = error
+            .source()
+            .and_then(|s| s.downcast_ref::<BindRangeError>())
+        {
             let message = match text
                 .strip_prefix("error serializing parameter ")
                 .and_then(|index| index.trim().parse::<usize>().ok())
