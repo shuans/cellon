@@ -212,7 +212,7 @@ impl AppError {
             AppError::Timeout(_) => 504,
             AppError::Handler(_) => 500,
             AppError::Internal(_) => 500,
-            AppError::PythonException(_) => 500,
+            AppError::PythonException(info) => info.status.unwrap_or(500),
             AppError::Custom { status, .. } => *status,
         }
     }
@@ -230,17 +230,35 @@ impl AppError {
             AppError::Timeout(_) => ("/errors/timeout", "Gateway Timeout"),
             AppError::Handler(_) => ("/errors/handler-error", "Handler Error"),
             AppError::Internal(_) => ("/errors/internal", "Internal Server Error"),
-            AppError::PythonException(_) => ("/errors/python-exception", "Internal Server Error"),
+            // A raised `cello.exceptions` error declares its status on the class,
+            // so a `NotFoundError` renders exactly like a route miss would. Only
+            // an exception with no declared status (or a 5xx) is a Python
+            // exception as far as the body is concerned.
+            AppError::PythonException(info) => match info.status {
+                Some(status) if status < 500 => status_problem_meta(status),
+                _ => ("/errors/python-exception", "Internal Server Error"),
+            },
             AppError::Custom { type_uri, .. } => {
                 (type_uri.as_deref().unwrap_or("/errors/custom"), "Error")
             }
+        };
+
+        // pyo3 renders a `PyErr` message as `TypeName: message`; a mapped 4xx
+        // shows the exception's own text, and an internal error keeps the type
+        // name, which is diagnostic there.
+        let detail = match self {
+            AppError::PythonException(info) => match info.status {
+                Some(status) if status < 500 => info.bare_message().to_string(),
+                _ => info.message.clone(),
+            },
+            _ => self.to_string(),
         };
 
         let mut details = ProblemDetails {
             type_uri: type_uri.to_string(),
             title: title.to_string(),
             status: self.status_code(),
-            detail: Some(self.to_string()),
+            detail: Some(detail),
             instance: None,
             extensions: HashMap::new(),
         };
@@ -291,6 +309,25 @@ impl AppError {
     }
 }
 
+/// `(type_uri, title)` for a bare HTTP status.
+///
+/// Used when a raised Python exception declares its own status, so the response
+/// body matches what the equivalent `AppError` variant would produce.
+fn status_problem_meta(status: u16) -> (&'static str, &'static str) {
+    match status {
+        400 => ("/errors/bad-request", "Bad Request"),
+        401 => ("/errors/unauthorized", "Unauthorized"),
+        403 => ("/errors/forbidden", "Forbidden"),
+        404 => ("/errors/not-found", "Not Found"),
+        409 => ("/errors/conflict", "Conflict"),
+        422 => ("/errors/validation", "Validation Error"),
+        429 => ("/errors/rate-limited", "Too Many Requests"),
+        500 => ("/errors/internal", "Internal Server Error"),
+        504 => ("/errors/timeout", "Gateway Timeout"),
+        _ => ("/errors/custom", "Error"),
+    }
+}
+
 /// Field-level validation error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldError {
@@ -331,6 +368,11 @@ pub struct PythonExceptionInfo {
     pub line: Option<u32>,
     /// The original Python exception instance, preserved for custom handlers.
     pub exception: Option<Py<PyAny>>,
+    /// HTTP status the exception declares on its class via `status_code`
+    /// (`cello.exceptions.*` sets it). `None` for exceptions that do not, which
+    /// stay internal errors — see [`AppError::status_code`] and
+    /// [`AppError::to_problem_details`].
+    pub status: Option<u16>,
 }
 
 impl Clone for PythonExceptionInfo {
@@ -341,6 +383,7 @@ impl Clone for PythonExceptionInfo {
             traceback: self.traceback.clone(),
             file: self.file.clone(),
             line: self.line,
+            status: self.status,
             // `Py<T>` is not `Clone` in pyo3 0.29, so the ref is cloned under the GIL.
             exception: self
                 .exception
@@ -363,6 +406,17 @@ impl PythonExceptionInfo {
 
         let traceback = err.traceback(py).and_then(|tb| tb.format().ok());
 
+        // `cello.exceptions.*` declares the HTTP status on the exception class
+        // (`NotFoundError.status_code == 404`). Read it here, where the GIL is
+        // held. Only a plausible status is accepted, and anything unreadable
+        // leaves the exception an internal error.
+        let status = err
+            .value(py)
+            .getattr(pyo3::intern!(py, "status_code"))
+            .ok()
+            .and_then(|value| value.extract::<u16>().ok())
+            .filter(|code| (100..=599).contains(code));
+
         Self {
             exception_type,
             message,
@@ -370,7 +424,22 @@ impl PythonExceptionInfo {
             file: None,
             line: None,
             exception: Some(err.value(py).clone().into_any().unbind()),
+            status,
         }
+    }
+
+    /// The exception's own message, without the `TypeName: ` prefix that
+    /// [`Self::message`] carries (pyo3 renders a `PyErr` that way).
+    pub fn bare_message(&self) -> &str {
+        let short = self
+            .exception_type
+            .rsplit('.')
+            .next()
+            .unwrap_or(&self.exception_type);
+        self.message
+            .strip_prefix(short)
+            .and_then(|rest| rest.strip_prefix(": "))
+            .unwrap_or(&self.message)
     }
 }
 
@@ -790,6 +859,7 @@ mod tests {
             file: None,
             line: None,
             exception: None,
+            status: None,
         });
         assert!(is_internal_detail(&python_error));
         assert!(is_internal_detail(&AppError::Internal("secret".into())));
@@ -812,6 +882,79 @@ mod tests {
         }));
     }
 
+    fn python_exception(
+        exception_type: &str,
+        message: &str,
+        status: Option<u16>,
+    ) -> PythonExceptionInfo {
+        PythonExceptionInfo {
+            exception_type: exception_type.into(),
+            message: message.into(),
+            traceback: None,
+            file: None,
+            line: None,
+            exception: None,
+            status,
+        }
+    }
+
+    /// A `cello.exceptions` subclass declares its status, and a raised one has to
+    /// answer with it — the 1:1 mapping the classes document.
+    #[test]
+    fn test_raised_exception_keeps_its_declared_status() {
+        let info = python_exception(
+            "NotFoundError",
+            "NotFoundError: user 42 missing",
+            Some(404),
+        );
+        let not_found = AppError::PythonException(info);
+        assert_eq!(not_found.status_code(), 404);
+
+        // The body is the RFC 7807 document a route miss produces, carrying the
+        // exception's own text without its type name.
+        let details = not_found.to_problem_details();
+        assert_eq!(details.type_uri, "/errors/not-found");
+        assert_eq!(details.title, "Not Found");
+        assert_eq!(details.detail.as_deref(), Some("user 42 missing"));
+        // A caller-facing 404 is never redacted.
+        assert!(!is_internal_detail(&not_found));
+
+        let validation = python_exception("ValidationError", "ValidationError: bad", Some(422));
+        assert_eq!(AppError::PythonException(validation).status_code(), 422);
+
+        // No declared status: still an internal error, still redacted, and the
+        // detail keeps the exception type, which is diagnostic there.
+        let info = python_exception("ValueError", "ValueError: boom", None);
+        let plain = AppError::PythonException(info);
+        assert_eq!(plain.status_code(), 500);
+        assert_eq!(
+            plain.to_problem_details().detail.as_deref(),
+            Some("ValueError: boom")
+        );
+        assert!(is_internal_detail(&plain));
+
+        // A 5xx declared by the exception is internal too.
+        let down = python_exception("InternalServerError", "db is down", Some(500));
+        let down = AppError::PythonException(down);
+        assert_eq!(down.status_code(), 500);
+        assert!(is_internal_detail(&down));
+    }
+
+    #[test]
+    fn test_bare_message_strips_the_exception_type() {
+        // pyo3 renders the type name in the message; a mapped 4xx body should not
+        // repeat it, and a name that does not prefix the message is left alone.
+        let qualified = python_exception(
+            "cello.exceptions.NotFoundError",
+            "NotFoundError: user 42 missing",
+            Some(404),
+        );
+        assert_eq!(qualified.bare_message(), "user 42 missing");
+
+        let bare = python_exception("ValueError", "boom", None);
+        assert_eq!(bare.bare_message(), "boom");
+    }
+
     #[test]
     fn test_redacted_response_drops_the_detail_and_extensions() {
         let error = AppError::PythonException(PythonExceptionInfo {
@@ -821,6 +964,7 @@ mod tests {
             file: None,
             line: None,
             exception: None,
+            status: None,
         });
 
         let full = String::from_utf8(error.to_response().body_buffer().to_vec()).unwrap();

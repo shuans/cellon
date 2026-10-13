@@ -194,6 +194,14 @@ Raised built-in errors render as RFC 7807 Problem Details with the matching
 status code by default; register an `@app.exception_handler(...)` to customize
 the response.
 
+The class's `status_code` is what decides it, so a raised error produces the same
+body the equivalent framework error does (`/errors/not-found` for
+`NotFoundError`, `/errors/validation` for `ValidationError`, …) and the original
+exception instance is still handed to a registered handler. An exception that
+declares no status — any ordinary Python error, such as `ValueError` — stays an
+internal error: 500, with its message redacted in production (see
+[Debug vs. Production Errors](#debug-vs-production-errors)).
+
 ---
 
 ## Customizing Error Responses

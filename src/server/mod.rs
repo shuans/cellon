@@ -1405,6 +1405,11 @@ where
         },
         Err(err) => {
             metrics.inc_errors();
+            // A raised `cello.exceptions.*` error declares its HTTP status on the
+            // exception class; `AppError::status_code()` reads it, so a raised
+            // `NotFoundError` answers 404 with the matching RFC 7807 body. The
+            // exception itself is kept, so `@app.exception_handler(NotFoundError)`
+            // still receives the original instance.
             let app_error = match err {
                 HandlerError::Python(info) => AppError::PythonException(info),
                 HandlerError::Message(message) => AppError::Internal(message),
