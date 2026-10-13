@@ -300,9 +300,7 @@ impl PyTransaction {
         let slot = self.conn.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = slot.lock().await;
-            let client = guard
-                .as_ref()
-                .ok_or_else(not_active)?;
+            let client = guard.as_ref().ok_or_else(not_active)?;
             let stmt = prepare_cached(client, &sql).await.map_err(db_err)?;
             let refs = as_sql_refs(&sql_params);
             let n = client.execute(&stmt, &refs).await.map_err(db_err)?;
@@ -322,9 +320,7 @@ impl PyTransaction {
         let slot = self.conn.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = slot.lock().await;
-            let client = guard
-                .as_ref()
-                .ok_or_else(not_active)?;
+            let client = guard.as_ref().ok_or_else(not_active)?;
             let stmt = prepare_cached(client, &sql).await.map_err(db_err)?;
             let refs = as_sql_refs(&sql_params);
             let rows = client.query(&stmt, &refs).await.map_err(db_err)?;
@@ -350,9 +346,7 @@ impl PyTransaction {
         let slot = self.conn.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = slot.lock().await;
-            let client = guard
-                .as_ref()
-                .ok_or_else(not_active)?;
+            let client = guard.as_ref().ok_or_else(not_active)?;
             let stmt = prepare_cached(client, &sql).await.map_err(db_err)?;
             let refs = as_sql_refs(&sql_params);
             let row = client.query_opt(&stmt, &refs).await.map_err(db_err)?;

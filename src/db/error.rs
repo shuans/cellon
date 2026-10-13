@@ -42,15 +42,60 @@ use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError, PyValueErro
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 
-pyo3::create_exception!(cello, DatabaseError, PyRuntimeError, "Base class for database errors.");
-pyo3::create_exception!(cello, IntegrityError, DatabaseError, "A constraint was violated (23).");
-pyo3::create_exception!(cello, UniqueViolation, IntegrityError, "Unique constraint (23505).");
-pyo3::create_exception!(cello, NotNullViolation, IntegrityError, "NOT NULL constraint (23502).");
-pyo3::create_exception!(cello, ForeignKeyViolation, IntegrityError, "Foreign key (23503).");
-pyo3::create_exception!(cello, CheckViolation, IntegrityError, "CHECK constraint (23514).");
-pyo3::create_exception!(cello, DataError, DatabaseError, "Invalid data (class 22).");
-pyo3::create_exception!(cello, OperationalError, DatabaseError, "Connection or pool failure.");
-pyo3::create_exception!(cello, ProgrammingError, DatabaseError, "Invalid SQL or schema (42).");
+pyo3::create_exception!(
+    cello,
+    DatabaseError,
+    PyRuntimeError,
+    "Base class for database errors. Subclasses RuntimeError."
+);
+pyo3::create_exception!(
+    cello,
+    IntegrityError,
+    DatabaseError,
+    "A constraint was violated (SQLSTATE class 23)."
+);
+pyo3::create_exception!(
+    cello,
+    UniqueViolation,
+    IntegrityError,
+    "Unique constraint violated (23505)."
+);
+pyo3::create_exception!(
+    cello,
+    NotNullViolation,
+    IntegrityError,
+    "NOT NULL constraint violated (23502)."
+);
+pyo3::create_exception!(
+    cello,
+    ForeignKeyViolation,
+    IntegrityError,
+    "Foreign key constraint violated (23503)."
+);
+pyo3::create_exception!(
+    cello,
+    CheckViolation,
+    IntegrityError,
+    "CHECK constraint violated (23514)."
+);
+pyo3::create_exception!(
+    cello,
+    DataError,
+    DatabaseError,
+    "Invalid data (SQLSTATE class 22), or a value that cannot be bound."
+);
+pyo3::create_exception!(
+    cello,
+    OperationalError,
+    DatabaseError,
+    "Connection, pool or server-availability failure."
+);
+pyo3::create_exception!(
+    cello,
+    ProgrammingError,
+    DatabaseError,
+    "Invalid SQL or schema reference (SQLSTATE class 42), or wrong parameter count."
+);
 
 /// The parameter-error classes, built with two bases each (`type(name, bases,
 /// ns)`) because `create_exception!` takes a single base and these must also be

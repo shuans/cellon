@@ -11,8 +11,8 @@ pub mod redis_client;
 pub mod value;
 
 pub use error::{
-    CheckViolation, DataError, DatabaseError, ForeignKeyViolation, IntegrityError, NotNullViolation,
-    OperationalError, PgError, ProgrammingError, UniqueViolation,
+    CheckViolation, DataError, DatabaseError, ForeignKeyViolation, IntegrityError,
+    NotNullViolation, OperationalError, PgError, ProgrammingError, UniqueViolation,
 };
 pub use postgres::{PyDatabase, PyTransaction};
 pub use redis_client::PyRedis;
