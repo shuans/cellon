@@ -28,6 +28,9 @@ _PORT = [17600]
 SLEEP = 0.010
 CONCURRENCY = 20
 
+# Make the serialized time much larger than HTTP client overhead on slow CI.
+TIMING_SLEEP = 0.050
+
 
 def _next_port():
     _PORT[0] += 1
@@ -89,7 +92,7 @@ def test_blocking_handler_is_offloaded_and_runs_concurrently():
 
     @app.get("/slow")
     def slow(request):
-        time.sleep(SLEEP)
+        time.sleep(TIMING_SLEEP)
         return {"tid": threading.get_ident()}
 
     base = _serve(app)
@@ -97,18 +100,15 @@ def test_blocking_handler_is_offloaded_and_runs_concurrently():
     # First call is inline and pays the cost; it promotes the handler.
     requests.get(base + "/slow", timeout=30)
 
-    n = 100
+    n = 60
     elapsed, tids = _hammer(base, "/slow", n)
 
-    # Serialised, 100 x 10ms would take ~1s. 0.75x still proves ~4x
-    # parallelism while tolerating slow-runner (macOS CI) scheduling noise;
-    # the structural proof of offload is the tid spread below.
-    serial = n * SLEEP
-    assert elapsed < serial * 0.75, (
+    # Serial execution would take three seconds; offloaded work must overlap.
+    serial = n * TIMING_SLEEP
+    assert elapsed < serial / 2, (
         f"{n} blocking requests took {elapsed:.2f}s; "
         f"serialised would be ~{serial:.2f}s — handler was not offloaded"
     )
-    assert n / elapsed > 100, "throughput still at the one-at-a-time ceiling"
     # Spread across the pool, not pinned to the server thread.
     assert len(set(tids)) > 1
 
@@ -138,16 +138,18 @@ def test_blocking_true_offloads_from_first_request():
 
     @app.get("/marked")
     def marked(request):
-        time.sleep(SLEEP)
+        time.sleep(TIMING_SLEEP)
         return {"tid": threading.get_ident()}
 
     base = _serve(app)
 
     # No warmup: concurrency must be present immediately.
-    n = 60
+    n = 40
     elapsed, tids = _hammer(base, "/marked", n)
-    # Allow for slower shared CI runners while still rejecting serial execution.
-    assert elapsed < (n * SLEEP) * 0.8
+    assert elapsed < (n * TIMING_SLEEP) / 2, (
+        f"{n} blocking=True requests took {elapsed:.2f}s; "
+        f"serialised would be ~{n * TIMING_SLEEP:.2f}s"
+    )
     assert len(set(tids)) > 1
 
 

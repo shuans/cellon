@@ -89,8 +89,18 @@ impl ToSql for SqlParam {
             SqlParam::Null => Ok(IsNull::Yes),
             SqlParam::Bool(b) => b.to_sql(ty, out),
             SqlParam::Int(i) => match *ty {
-                Type::INT2 => (*i as i16).to_sql(ty, out),
-                Type::INT4 => (*i as i32).to_sql(ty, out),
+                Type::INT2 => i16::try_from(*i)
+                    .map_err(|_| super::error::BindRangeError {
+                        value: *i,
+                        target: ty.to_string(),
+                    })?
+                    .to_sql(ty, out),
+                Type::INT4 => i32::try_from(*i)
+                    .map_err(|_| super::error::BindRangeError {
+                        value: *i,
+                        target: ty.to_string(),
+                    })?
+                    .to_sql(ty, out),
                 Type::FLOAT4 => (*i as f32).to_sql(ty, out),
                 Type::FLOAT8 => (*i as f64).to_sql(ty, out),
                 // int8 and everything else that accepts an integer.
@@ -222,4 +232,28 @@ pub fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAn
         }
     };
     Ok(obj)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::error::BindRangeError;
+
+    #[test]
+    fn integer_binding_rejects_values_outside_column_range() {
+        for (value, ty) in [
+            (32768, Type::INT2),
+            (-32769, Type::INT2),
+            (2147483648, Type::INT4),
+        ] {
+            let error = SqlParam::Int(value)
+                .to_sql(&ty, &mut BytesMut::new())
+                .expect_err("out-of-range integer must not be truncated");
+            assert!(error.downcast_ref::<BindRangeError>().is_some());
+        }
+
+        SqlParam::Int(32767)
+            .to_sql(&Type::INT2, &mut BytesMut::new())
+            .expect("upper smallint boundary should bind");
+    }
 }

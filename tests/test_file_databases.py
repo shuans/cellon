@@ -6,7 +6,8 @@ import pytest
 
 from cello import App, DatabaseConfig, EventSourcingConfig
 from cello.eventsourcing import Event, EventStore
-from cello.orm import AutoField, CharField, IntegerField, Model, setup
+from cello.database import transactional
+from cello.orm import AutoField, CharField, FieldError, IntegerField, Model, setup
 
 
 def _run(coro):
@@ -65,6 +66,50 @@ def test_sqlite_orm_crud_and_filters():
         await FileDbUser.objects.filter(name="Bob").update(age=21)
         assert (await FileDbUser.objects.get(name="Bob")).age == 21
         await FileDbUser.objects.filter(name="Alice").delete()
+        assert await FileDbUser.objects.count() == 1
+        await app.database.close()
+
+    _run(main())
+
+
+def test_orm_rejects_unknown_and_unsafe_identifiers():
+    payload = 'name" = 1 OR "1'
+    with pytest.raises(FieldError, match="Invalid SQL identifier"):
+        FileDbUser.objects.filter(**{payload: "Alice"})
+    with pytest.raises(FieldError, match="Invalid SQL identifier"):
+        FileDbUser.objects.order_by(payload)
+    with pytest.raises(FieldError, match="Unknown field"):
+        FileDbUser.objects.filter(missing="Alice")
+
+    async def update():
+        with pytest.raises(FieldError, match="Invalid SQL identifier"):
+            await FileDbUser.objects.using(object()).update(**{payload: "Alice"})
+
+    _run(update())
+
+
+def test_orm_uses_sqlite_transaction_for_rollback():
+    async def main():
+        app = App()
+        app.enable_database(DatabaseConfig(url="sqlite:///:memory:"))
+        setup(app.database)
+        await FileDbUser.create_table()
+
+        class Request:
+            database = app.database
+
+        @transactional
+        async def create_then_fail(request, tx):
+            await FileDbUser.objects.create(name="Rolled back")
+            assert await FileDbUser.objects.count() == 1
+            raise ValueError("rollback")
+
+        with pytest.raises(ValueError, match="rollback"):
+            await create_then_fail(Request())
+        assert await FileDbUser.objects.count() == 0
+
+        async with app.database.transaction():
+            await FileDbUser.objects.create(name="Committed")
         assert await FileDbUser.objects.count() == 1
         await app.database.close()
 

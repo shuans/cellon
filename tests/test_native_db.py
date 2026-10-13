@@ -355,6 +355,66 @@ def test_sqlstate_maps_to_a_typed_error():
 
 
 @pg
+def test_integer_parameters_reject_out_of_range_values():
+    from cello import ParameterRangeError
+
+    async def main():
+        app = App()
+        app.enable_database(DatabaseConfig(url=DSN, pool_size=1))
+        db = app.database
+        try:
+            with pytest.raises(ParameterRangeError, match=r"parameter \$1.*int2"):
+                await db.fetchval("SELECT $1::smallint", 32768)
+            with pytest.raises(ParameterRangeError, match=r"parameter \$1.*int4"):
+                await db.fetchval("SELECT $1::integer", 2147483648)
+            assert await db.fetchval("SELECT $1::smallint", 32767) == 32767
+            assert await db.fetchval("SELECT $1::integer", -2147483648) == -2147483648
+        finally:
+            await db.close()
+
+    _run(main())
+
+
+@pg
+def test_transactional_orm_uses_the_native_transaction():
+    from cello.database import transactional
+
+    class TransactionUser(Model):
+        id = AutoField()
+        name = CharField(max_length=40)
+
+        class Meta:
+            table_name = "t_transaction_orm"
+
+    async def main():
+        app = App()
+        app.enable_database(DatabaseConfig(url=DSN, pool_size=2))
+        db = app.database
+        setup(db)
+        await TransactionUser.drop_table()
+        await TransactionUser.create_table()
+
+        class Request:
+            database = db
+
+        @transactional
+        async def insert_then_fail(request, tx):
+            await TransactionUser.objects.create(name="Rolled back")
+            assert await TransactionUser.objects.count() == 1
+            raise ValueError("rollback")
+
+        try:
+            with pytest.raises(ValueError, match="rollback"):
+                await insert_then_fail(Request())
+            assert await TransactionUser.objects.count() == 0
+        finally:
+            await TransactionUser.drop_table()
+            await db.close()
+
+    _run(main())
+
+
+@pg
 def test_pool_failure_is_operational_error():
     async def main():
         # A port with nothing listening: the pool check-out fails.

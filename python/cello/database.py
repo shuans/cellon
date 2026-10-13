@@ -9,6 +9,7 @@ exposing the same fetch/fetchrow/fetchval/execute/transaction API.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import sqlite3
 from functools import wraps
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 __all__ = ["transactional", "AsyncFileDatabase"]
+
+_current_tx = contextvars.ContextVar("cellon_current_transaction", default=None)
 
 
 class AsyncFileDatabase:
@@ -137,6 +140,7 @@ class AsyncFileTransaction:
     def __init__(self, database: AsyncFileDatabase) -> None:
         self.database = database
         self._active = False
+        self._token = None
 
     async def __aenter__(self) -> "AsyncFileTransaction":
         if self.database._closed:
@@ -148,6 +152,7 @@ class AsyncFileTransaction:
             self.database._lock.release()
             raise
         self._active = True
+        self._token = _current_tx.set(self)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -157,6 +162,8 @@ class AsyncFileTransaction:
                 lambda: self.database._connection.execute(statement)
             )
         finally:
+            _current_tx.reset(self._token)
+            self._token = None
             self._active = False
             self.database._lock.release()
         return False
@@ -244,6 +251,10 @@ def transactional(func: Callable) -> Callable:
                 "@transactional needs a database. Call app.enable_database(...) first."
             ) from exc
         async with database.transaction() as tx:
-            return await func(request, *args, tx=tx, **kwargs)
+            token = _current_tx.set(tx)
+            try:
+                return await func(request, *args, tx=tx, **kwargs)
+            finally:
+                _current_tx.reset(token)
 
     return wrapper

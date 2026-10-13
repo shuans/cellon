@@ -38,7 +38,10 @@ Quick start::
         return u.to_dict()
 """
 
+import re
 from typing import Any, Optional
+
+from cello.database import _current_tx
 
 __all__ = [
     "setup",
@@ -56,6 +59,7 @@ __all__ = [
     "ForeignKey",
     "DoesNotExist",
     "MultipleObjectsReturned",
+    "FieldError",
 ]
 
 
@@ -75,7 +79,11 @@ def setup(database) -> None:
 
 
 def _require_db(db):
-    db = db or _DEFAULT_DB
+    """Use an explicit connection, the active transaction, or the default pool."""
+    if db is None:
+        db = _current_tx.get()
+    if db is None:
+        db = _DEFAULT_DB
     if db is None:
         raise RuntimeError(
             "ORM is not bound to a database. Call cello.orm.setup(app.database) "
@@ -90,6 +98,19 @@ class DoesNotExist(Exception):
 
 class MultipleObjectsReturned(Exception):
     """Raised by ``get()`` when more than one row matches."""
+
+
+class FieldError(ValueError):
+    """Raised when a query or model contains an invalid field identifier."""
+
+
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _identifier(value: str) -> str:
+    if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
+        raise FieldError(f"Invalid SQL identifier: {value!r}")
+    return value
 
 
 # ── Fields ────────────────────────────────────────────────────────────────────
@@ -271,7 +292,9 @@ class ModelMeta(type):
 
         pk_name = next((n for n, f in fields.items() if f.primary_key), None)
         meta_opts = namespace.get("Meta")
-        table_name = getattr(meta_opts, "table_name", None) or name.lower()
+        table_name = _identifier(getattr(meta_opts, "table_name", None) or name.lower())
+        for field in fields.values():
+            _identifier(field.column)
         pk_column = fields[pk_name].column if pk_name else None
 
         cls = super().__new__(mcls, name, bases, namespace)
@@ -471,11 +494,14 @@ class QuerySet:
         return qs
 
     def _resolve_column(self, field_name: str) -> str:
+        _identifier(field_name)
         field = self.model._meta.fields.get(field_name)
-        if field is None:
-            # allow raw column names (e.g. FK ``author_id``)
-            return field_name
-        return field.column
+        if field is not None:
+            return field.column
+        for field in self.model._meta.fields.values():
+            if field.column == field_name:
+                return field_name
+        raise FieldError(f"Unknown field {field_name!r} on {self.model.__name__}")
 
     def _add_conditions(self, negate: bool, kwargs: dict):
         qs = self._clone()

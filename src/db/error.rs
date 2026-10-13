@@ -215,6 +215,21 @@ pub enum ErrClass {
     ParamValue,
 }
 
+/// An integer parameter cannot be represented by its PostgreSQL column type.
+#[derive(Debug)]
+pub struct BindRangeError {
+    pub value: i64,
+    pub target: String,
+}
+
+impl fmt::Display for BindRangeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "value {} is out of range for Postgres type {}", self.value, self.target)
+    }
+}
+
+impl StdError for BindRangeError {}
+
 /// A database error as plain data: `Send`, and no GIL needed to build it.
 #[derive(Debug)]
 pub struct PgError {
@@ -273,6 +288,16 @@ impl PgError {
             };
         }
         let text = error.to_string();
+        if let Some(range) = error.source().and_then(|s| s.downcast_ref::<BindRangeError>()) {
+            let message = match text
+                .strip_prefix("error serializing parameter ")
+                .and_then(|index| index.trim().parse::<usize>().ok())
+            {
+                Some(index) => format!("parameter ${}: {range}", index + 1),
+                None => format!("{text}: {range}"),
+            };
+            return Self::new(ErrClass::ParamRange, message);
+        }
         let connection_failure = error.is_closed()
             || error
                 .source()
