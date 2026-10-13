@@ -296,19 +296,19 @@ impl PgError {
     /// Build the Python exception (GIL held).
     pub fn into_pyerr_with(self, py: Python<'_>) -> PyErr {
         let class = match self.class {
-            ErrClass::Database => DatabaseError::type_object(py).into_any(),
-            ErrClass::Integrity => IntegrityError::type_object(py).into_any(),
-            ErrClass::Unique => UniqueViolation::type_object(py).into_any(),
-            ErrClass::NotNull => NotNullViolation::type_object(py).into_any(),
-            ErrClass::ForeignKey => ForeignKeyViolation::type_object(py).into_any(),
-            ErrClass::Check => CheckViolation::type_object(py).into_any(),
-            ErrClass::Data => DataError::type_object(py).into_any(),
-            ErrClass::Operational => OperationalError::type_object(py).into_any(),
-            ErrClass::Programming => ProgrammingError::type_object(py).into_any(),
+            ErrClass::Database => py.get_type::<DatabaseError>().into_any(),
+            ErrClass::Integrity => py.get_type::<IntegrityError>().into_any(),
+            ErrClass::Unique => py.get_type::<UniqueViolation>().into_any(),
+            ErrClass::NotNull => py.get_type::<NotNullViolation>().into_any(),
+            ErrClass::ForeignKey => py.get_type::<ForeignKeyViolation>().into_any(),
+            ErrClass::Check => py.get_type::<CheckViolation>().into_any(),
+            ErrClass::Data => py.get_type::<DataError>().into_any(),
+            ErrClass::Operational => py.get_type::<OperationalError>().into_any(),
+            ErrClass::Programming => py.get_type::<ProgrammingError>().into_any(),
             // Fall back to the base class if the module was never registered
             // (only reachable outside the extension module itself).
             ErrClass::ParamType | ErrClass::ParamRange | ErrClass::ParamValue => {
-                let fallback = DataError::type_object(py).into_any();
+                let fallback = py.get_type::<DataError>().into_any();
                 param_class(py, self.class).unwrap_or(fallback)
             }
         };
