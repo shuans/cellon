@@ -246,9 +246,10 @@ mod tests {
             (-32769, Type::INT2),
             (2147483648, Type::INT4),
         ] {
-            let error = SqlParam::Int(value)
-                .to_sql(&ty, &mut BytesMut::new())
-                .expect_err("out-of-range integer must not be truncated");
+            let error = match SqlParam::Int(value).to_sql(&ty, &mut BytesMut::new()) {
+                Err(error) => error,
+                Ok(_) => panic!("out-of-range integer must not be truncated"),
+            };
             assert!(error.downcast_ref::<BindRangeError>().is_some());
         }
 
