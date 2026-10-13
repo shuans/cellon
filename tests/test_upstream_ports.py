@@ -212,7 +212,9 @@ def test_exception_handler_still_sees_the_error_when_redaction_is_on():
     finally:
         app._app.set_expose_errors(True)
 
-    assert r.status_code == 200
+    # The handler ran (its body is the response) and saw the *real* message,
+    # even though redaction is on for every unhandled error in this process.
+    assert r.status_code == 500
     assert r.json() == {"handled": "visible to the handler"}
 
 
