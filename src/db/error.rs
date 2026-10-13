@@ -100,27 +100,28 @@ pyo3::create_exception!(
 /// The parameter-error classes, built with two bases each (`type(name, bases,
 /// ns)`) because `create_exception!` takes a single base and these must also be
 /// the builtin they replaced. Created once in [`register`].
-static PARAM_TYPES: RwLock<Option<[Py<PyType>; 3]>> = RwLock::new(None);
+static PARAM_TYPES: RwLock<Option<[Py<PyAny>; 3]>> = RwLock::new(None);
 
 /// Attributes every `DatabaseError` carries; `None` when the driver did not
 /// supply them, so attribute access never raises `AttributeError`.
 const ATTRS: [&str; 5] = ["sqlstate", "detail", "constraint", "table", "column"];
 
+/// Build one `DataError` + builtin class with `type(name, bases, ns)`.
 fn make_param_type<'py>(
     py: Python<'py>,
     name: &str,
     builtin: Bound<'py, PyType>,
     doc: &str,
-) -> PyResult<Py<PyType>> {
+) -> PyResult<Py<PyAny>> {
     let ns = PyDict::new(py);
     ns.set_item("__module__", "cello")?;
     ns.set_item("__doc__", doc)?;
     let bases = PyTuple::new(py, [py.get_type::<DataError>(), builtin])?;
     let created = py.get_type::<PyType>().call1((name, bases, ns))?;
-    created.extract()
+    Ok(created.unbind())
 }
 
-fn build_param_types(py: Python<'_>) -> PyResult<[Py<PyType>; 3]> {
+fn build_param_types(py: Python<'_>) -> PyResult<[Py<PyAny>; 3]> {
     Ok([
         make_param_type(
             py,
@@ -147,7 +148,7 @@ fn build_param_types(py: Python<'_>) -> PyResult<[Py<PyType>; 3]> {
 }
 
 /// The parameter-error classes, if [`register`] has run.
-fn param_types(py: Python<'_>) -> Option<[Py<PyType>; 3]> {
+fn param_types(py: Python<'_>) -> Option<[Py<PyAny>; 3]> {
     let guard = PARAM_TYPES.read();
     let classes = guard.as_ref()?;
     Some([
@@ -158,7 +159,7 @@ fn param_types(py: Python<'_>) -> Option<[Py<PyType>; 3]> {
 }
 
 /// The `DataError` subclass for a parameter problem.
-fn param_class<'py>(py: Python<'py>, class: ErrClass) -> Option<Bound<'py, PyType>> {
+fn param_class<'py>(py: Python<'py>, class: ErrClass) -> Option<Bound<'py, PyAny>> {
     let classes = param_types(py)?;
     Some(match class {
         ErrClass::ParamRange => classes[1].clone_ref(py).into_bound(py),
@@ -294,25 +295,26 @@ impl PgError {
 
     /// Build the Python exception (GIL held).
     pub fn into_pyerr_with(self, py: Python<'_>) -> PyErr {
-        let cls = match self.class {
-            ErrClass::Database => py.get_type::<DatabaseError>(),
-            ErrClass::Integrity => py.get_type::<IntegrityError>(),
-            ErrClass::Unique => py.get_type::<UniqueViolation>(),
-            ErrClass::NotNull => py.get_type::<NotNullViolation>(),
-            ErrClass::ForeignKey => py.get_type::<ForeignKeyViolation>(),
-            ErrClass::Check => py.get_type::<CheckViolation>(),
-            ErrClass::Data => py.get_type::<DataError>(),
-            ErrClass::Operational => py.get_type::<OperationalError>(),
-            ErrClass::Programming => py.get_type::<ProgrammingError>(),
+        let class = match self.class {
+            ErrClass::Database => DatabaseError::type_object(py).into_any(),
+            ErrClass::Integrity => IntegrityError::type_object(py).into_any(),
+            ErrClass::Unique => UniqueViolation::type_object(py).into_any(),
+            ErrClass::NotNull => NotNullViolation::type_object(py).into_any(),
+            ErrClass::ForeignKey => ForeignKeyViolation::type_object(py).into_any(),
+            ErrClass::Check => CheckViolation::type_object(py).into_any(),
+            ErrClass::Data => DataError::type_object(py).into_any(),
+            ErrClass::Operational => OperationalError::type_object(py).into_any(),
+            ErrClass::Programming => ProgrammingError::type_object(py).into_any(),
             // Fall back to the base class if the module was never registered
             // (only reachable outside the extension module itself).
             ErrClass::ParamType | ErrClass::ParamRange | ErrClass::ParamValue => {
-                param_class(py, self.class).unwrap_or_else(|| py.get_type::<DataError>())
+                let fallback = DataError::type_object(py).into_any();
+                param_class(py, self.class).unwrap_or(fallback)
             }
         };
 
         let build = || -> PyResult<PyErr> {
-            let instance = cls.call1((self.msg.as_str(),))?;
+            let instance = class.call1((self.msg.as_str(),))?;
             let values = [
                 &self.sqlstate,
                 &self.detail,
@@ -373,8 +375,8 @@ impl fmt::Display for PgError {
 mod tests {
     use super::*;
 
-    /// The classes exist and nest the way the hierarchy documents, so
-    /// `except RuntimeError` and `except TypeError` keep catching what they did.
+    /// Every SQLSTATE class reaches the error class a caller would expect,
+    /// including the generic fallbacks for classes with no specific rule.
     #[test]
     fn test_class_for_sqlstate() {
         assert_eq!(class_for_sqlstate("23505"), ErrClass::Unique);
@@ -389,6 +391,8 @@ mod tests {
         assert_eq!(class_for_sqlstate("XX000"), ErrClass::Database);
     }
 
+    /// A pool failure's own message is only the error kind; the useful part is
+    /// in the cause chain, and the message has to carry it.
     #[test]
     fn test_operational_message_keeps_the_cause_chain() {
         #[derive(Debug)]
