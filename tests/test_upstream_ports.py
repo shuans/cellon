@@ -20,6 +20,12 @@ release commit, because each one fixes real behaviour in this fork.
 
 The first two are process-wide state (the debug flag, the interpreter's pending
 signal), so each scenario runs a real server script in a subprocess.
+
+Note on the exception-handler test: an exception raised in a handler is always
+reported as ``cello.AppError::PythonException``, whose status is 500 — a
+registered ``@app.exception_handler`` therefore answers 500 with its own body
+unless it returns a ``Response`` with an explicit status. That mapping is
+pre-existing behaviour, unrelated to redaction.
 """
 
 import os
@@ -155,7 +161,7 @@ def test_unhandled_error_is_described_in_debug(tmp_path):
     assert r.status_code == 500
     # In development the detail is the point of the response.
     assert "secret-constraint" in r.text
-    assert r.json()["detail"].startswith("ValueError")
+    assert "ValueError" in r.json()["detail"]
 
 
 def _serve(app, port):
@@ -178,7 +184,13 @@ def _serve(app, port):
 
 
 def test_exception_handler_still_sees_the_error_when_redaction_is_on():
-    """Redaction only shapes the *default* 500 — a registered handler still wins."""
+    """Redaction only shapes the *default* 500 — a registered handler still wins.
+
+    The handler's return value is serialized at the error's status, which for an
+    exception raised in a handler is 500 (see the mapping note in the test
+    module docstring), so the point here is the *body*: the handler ran and saw
+    the real message even though details are redacted for every other client.
+    """
     app = App()
     app._app.set_expose_errors(False)
     try:

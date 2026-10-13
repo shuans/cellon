@@ -50,7 +50,9 @@ pub fn expose_error_details() -> bool {
 /// the variants whose text comes from an exception or the database.
 fn is_internal_detail(error: &AppError) -> bool {
     match error {
-        AppError::Internal(_) | AppError::Handler(_) | AppError::PythonException(_) => true,
+        AppError::Internal(_) | AppError::Handler(_) | AppError::PythonException(_) => {
+            error.status_code() >= 500
+        }
         AppError::Custom { status, .. } => *status >= 500,
         _ => false,
     }
@@ -797,8 +799,12 @@ mod tests {
             type_uri: None,
         }));
 
-        assert!(!is_internal_detail(&AppError::NotFound("no such user".into())));
-        assert!(!is_internal_detail(&AppError::Timeout("took too long".into())));
+        assert!(!is_internal_detail(&AppError::NotFound(
+            "no such user".into()
+        )));
+        assert!(!is_internal_detail(&AppError::Timeout(
+            "took too long".into()
+        )));
         assert!(!is_internal_detail(&AppError::Custom {
             status: 409,
             message: "conflict".into(),
