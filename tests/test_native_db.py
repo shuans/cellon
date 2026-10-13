@@ -14,7 +14,23 @@ import os
 
 import pytest
 
-from cello import App, DatabaseConfig, OperationalError, RedisConfig
+from cello import (
+    App,
+    CheckViolation,
+    DataError,
+    DatabaseConfig,
+    DatabaseError,
+    ForeignKeyViolation,
+    IntegrityError,
+    NotNullViolation,
+    OperationalError,
+    ParameterRangeError,
+    ParameterTypeError,
+    ParameterValueError,
+    ProgrammingError,
+    RedisConfig,
+    UniqueViolation,
+)
 from cello.database import transactional  # noqa: F401 (imported for API surface)
 from cello.orm import (
     Model,
@@ -251,21 +267,6 @@ def test_orm_crud_filter_and_fk():
 
 def test_database_error_hierarchy():
     """The hierarchy exists without a server, and nests the documented way."""
-    from cello import (
-        CheckViolation,
-        DataError,
-        DatabaseError,
-        ForeignKeyViolation,
-        IntegrityError,
-        NotNullViolation,
-        OperationalError,
-        ParameterRangeError,
-        ParameterTypeError,
-        ParameterValueError,
-        ProgrammingError,
-        UniqueViolation,
-    )
-
     # Code written against 1.3.0 (`except RuntimeError`) keeps catching these.
     assert issubclass(DatabaseError, RuntimeError)
     assert issubclass(IntegrityError, DatabaseError)
