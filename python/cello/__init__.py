@@ -178,6 +178,24 @@ from cello._cello import (
     Redis,
 )
 
+# Typed database errors: SQLSTATE (and pool / parameter failures) map onto a
+# class, so a unique violation is a UniqueViolation carrying `.constraint`
+# rather than a RuntimeError with the server's text.
+from cello._cello import (
+    DatabaseError,
+    IntegrityError,
+    UniqueViolation,
+    NotNullViolation,
+    ForeignKeyViolation,
+    CheckViolation,
+    DataError,
+    OperationalError,
+    ProgrammingError,
+    ParameterTypeError,
+    ParameterRangeError,
+    ParameterValueError,
+)
+
 # v0.9.0 - API Protocol features
 from cello._cello import (
     GrpcConfig,
@@ -348,6 +366,19 @@ __all__ = [
     "SagaConfig",
     # RFC 7807
     "ProblemDetails",
+    # Database error hierarchy
+    "DatabaseError",
+    "IntegrityError",
+    "UniqueViolation",
+    "NotNullViolation",
+    "ForeignKeyViolation",
+    "CheckViolation",
+    "DataError",
+    "OperationalError",
+    "ProgrammingError",
+    "ParameterTypeError",
+    "ParameterRangeError",
+    "ParameterValueError",
     # Built-in error classes
     "CelloError",
     "ValidationError",

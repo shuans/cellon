@@ -60,7 +60,10 @@ pub fn py_to_sqlparam(obj: &Bound<'_, PyAny>) -> PyResult<SqlParam> {
     let json_mod = obj.py().import("json")?;
     let dumped: String = json_mod.call_method1("dumps", (obj,))?.extract()?;
     let value: serde_json::Value = serde_json::from_str(&dumped).map_err(|e| {
-        pyo3::exceptions::PyTypeError::new_err(format!(
+        // `ParameterTypeError` is also a `TypeError`, so this is still what a
+        // caller that catches `TypeError` expects, but it is identifiable as a
+        // parameter problem (and carries the column/parameter context).
+        super::error::param_type_error(format!(
             "unsupported SQL parameter type ({}): {e}",
             obj.get_type()
                 .name()
@@ -131,7 +134,7 @@ fn pg_value_to_py(py: Python<'_>, row: &Row, idx: usize, ty: &Type) -> PyResult<
     macro_rules! get {
         ($t:ty) => {
             row.try_get::<_, Option<$t>>(idx)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+                .map_err(|e| super::error::decode_error(&e))?
         };
     }
 

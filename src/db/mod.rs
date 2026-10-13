@@ -5,9 +5,14 @@
 //! Both expose Python awaitables through `pyo3_async_runtimes::tokio::future_into_py`,
 //! matching the proven `AsyncClient` bridge (see `src/http_client.rs`).
 
+pub mod error;
 pub mod postgres;
 pub mod redis_client;
 pub mod value;
 
+pub use error::{
+    CheckViolation, DataError, DatabaseError, ForeignKeyViolation, IntegrityError, NotNullViolation,
+    OperationalError, PgError, ProgrammingError, UniqueViolation,
+};
 pub use postgres::{PyDatabase, PyTransaction};
 pub use redis_client::PyRedis;

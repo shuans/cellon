@@ -111,6 +111,50 @@ timestamps/uuid become ISO strings. For `numeric`/`timestamptz` **parameters**,
 add an explicit cast — `$1::numeric` — so the value binds as text and Postgres
 casts it.
 
+## Errors
+
+Every database failure raises a subclass of `DatabaseError`, which subclasses
+`RuntimeError` — so code written against the older data layer
+(`except RuntimeError`) still catches them — and carries the driver's
+diagnostics as attributes:
+
+```text
+RuntimeError
+└── DatabaseError                 .sqlstate / .detail / .constraint / .table / .column
+    ├── IntegrityError            SQLSTATE class 23
+    │   ├── UniqueViolation       23505
+    │   ├── NotNullViolation      23502
+    │   ├── ForeignKeyViolation   23503
+    │   └── CheckViolation        23514
+    ├── DataError                 SQLSTATE class 22, and values that cannot be bound
+    │   ├── ParameterTypeError    (also a TypeError)
+    │   ├── ParameterRangeError   (also an OverflowError)
+    │   └── ParameterValueError   (also a ValueError)
+    ├── OperationalError          connection / pool failures, classes 08 40 53 57 58
+    └── ProgrammingError          SQLSTATE class 42, wrong parameter count
+```
+
+```python
+from cello import UniqueViolation
+
+@app.post("/users")
+async def create(request):
+    data = request.json()
+    try:
+        await request.database.execute(
+            "INSERT INTO users (email) VALUES ($1)", data["email"]
+        )
+    except UniqueViolation as exc:
+        # "t_users_email_key" — no need to parse the server's message
+        return Response.json({"field": exc.constraint}, status=409)
+    return {"created": True}
+```
+
+A connection that cannot be established, a dead connection or an exhausted pool
+is an `OperationalError` (the message includes the driver's cause chain, such as
+a TLS or `pg_hba` rejection). A malformed SQL statement is a
+`ProgrammingError`.
+
 ## Transactions
 
 ```python

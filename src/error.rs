@@ -902,11 +902,7 @@ mod tests {
     /// answer with it — the 1:1 mapping the classes document.
     #[test]
     fn test_raised_exception_keeps_its_declared_status() {
-        let info = python_exception(
-            "NotFoundError",
-            "NotFoundError: user 42 missing",
-            Some(404),
-        );
+        let info = python_exception("NotFoundError", "NotFoundError: user 42 missing", Some(404));
         let not_found = AppError::PythonException(info);
         assert_eq!(not_found.status_code(), 404);
 

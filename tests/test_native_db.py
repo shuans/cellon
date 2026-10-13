@@ -14,7 +14,7 @@ import os
 
 import pytest
 
-from cello import App, DatabaseConfig, RedisConfig
+from cello import App, DatabaseConfig, OperationalError, RedisConfig
 from cello.database import transactional  # noqa: F401 (imported for API surface)
 from cello.orm import (
     Model,
@@ -242,5 +242,126 @@ def test_orm_crud_filter_and_fk():
         await OrmPost.drop_table()
         await OrmUser.drop_table()
         await app.database.close()
+
+    _run(main())
+
+
+# ── Typed database errors ─────────────────────────────────────────────────────
+
+
+def test_database_error_hierarchy():
+    """The hierarchy exists without a server, and nests the documented way."""
+    from cello import (
+        CheckViolation,
+        DataError,
+        DatabaseError,
+        ForeignKeyViolation,
+        IntegrityError,
+        NotNullViolation,
+        OperationalError,
+        ParameterRangeError,
+        ParameterTypeError,
+        ParameterValueError,
+        ProgrammingError,
+        UniqueViolation,
+    )
+
+    # Code written against 1.3.0 (`except RuntimeError`) keeps catching these.
+    assert issubclass(DatabaseError, RuntimeError)
+    assert issubclass(IntegrityError, DatabaseError)
+    for cls in (
+        UniqueViolation,
+        NotNullViolation,
+        ForeignKeyViolation,
+        CheckViolation,
+    ):
+        assert issubclass(cls, IntegrityError)
+    for cls in (DataError, OperationalError, ProgrammingError):
+        assert issubclass(cls, DatabaseError)
+
+    # The parameter errors also keep the builtin they used to be raised as.
+    assert issubclass(ParameterTypeError, (DataError, TypeError))
+    assert issubclass(ParameterRangeError, (DataError, OverflowError))
+    assert issubclass(ParameterValueError, (DataError, ValueError))
+
+    # Attributes exist on every instance, even when the driver supplied none.
+    exc = DatabaseError("boom")
+    for attr in ("sqlstate", "detail", "constraint", "table", "column"):
+        assert getattr(exc, attr) is None
+
+
+@pg
+def test_sqlstate_maps_to_a_typed_error():
+    async def main():
+        app = App()
+        app.enable_database(DatabaseConfig(url=DSN, pool_size=2))
+        db = app.database
+        try:
+            await db.execute("DROP TABLE IF EXISTS t_errors")
+            await db.execute(
+                "CREATE TABLE t_errors ("
+                "id serial PRIMARY KEY, "
+                "email text UNIQUE NOT NULL, "
+                "parent_id int REFERENCES t_errors(id), "
+                "score int CHECK (score > 0))"
+            )
+            await db.execute("INSERT INTO t_errors (email, score) VALUES ($1, $2)", "a@x.com", 1)
+
+            # 23505 unique violation, with the constraint name read off the error.
+            with pytest.raises(UniqueViolation) as unique:
+                await db.execute("INSERT INTO t_errors (email, score) VALUES ($1, $2)", "a@x.com", 1)
+            assert unique.value.sqlstate == "23505"
+            assert unique.value.constraint == "t_errors_email_key"
+            assert unique.value.table == "t_errors"
+            # `except RuntimeError` and `except DatabaseError` still catch it.
+            assert isinstance(unique.value, DatabaseError)
+            assert isinstance(unique.value, RuntimeError)
+
+            # 23502 NOT NULL.
+            with pytest.raises(NotNullViolation) as not_null:
+                await db.execute("INSERT INTO t_errors (score) VALUES ($1)", 1)
+            assert not_null.value.sqlstate == "23502"
+            assert not_null.value.column == "email"
+
+            # 23503 foreign key.
+            with pytest.raises(ForeignKeyViolation) as fk:
+                await db.execute(
+                    "INSERT INTO t_errors (email, parent_id, score) VALUES ($1, $2, $3)",
+                    "b@x.com",
+                    999,
+                    1,
+                )
+            assert fk.value.sqlstate == "23503"
+            assert fk.value.constraint == "t_errors_parent_id_fkey"
+
+            # 23514 CHECK.
+            with pytest.raises(CheckViolation) as check:
+                await db.execute("INSERT INTO t_errors (email, score) VALUES ($1, $2)", "c@x.com", 0)
+            assert check.value.sqlstate == "23514"
+
+            # 42P01 undefined table → ProgrammingError.
+            with pytest.raises(ProgrammingError) as missing:
+                await db.fetch("SELECT * FROM t_errors_does_not_exist")
+            assert missing.value.sqlstate == "42P01"
+
+            # A successful query still works after all of those.
+            assert await db.fetchval("SELECT count(*) FROM t_errors") == 1
+        finally:
+            await db.execute("DROP TABLE IF EXISTS t_errors")
+            await db.close()
+
+    _run(main())
+
+
+@pg
+def test_pool_failure_is_operational_error():
+    async def main():
+        # A port with nothing listening: the pool check-out fails.
+        app = App()
+        app.enable_database(
+            DatabaseConfig(url="postgresql://postgres:postgres@127.0.0.1:59999/nope", pool_size=1)
+        )
+        with pytest.raises(OperationalError):
+            await app.database.fetch("SELECT 1")
 
     _run(main())

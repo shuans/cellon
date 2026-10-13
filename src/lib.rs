@@ -2639,6 +2639,11 @@ async fn run_lifecycle_handler_async(handler: Py<PyAny>) -> Result<(), String> {
 /// Python module definition.
 #[pymodule]
 fn _cello(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Database exception hierarchy (`DatabaseError` and its subclasses), so a
+    // unique violation is a `UniqueViolation` with `.constraint`, not a bare
+    // `RuntimeError` string.
+    db::error::register(m)?;
+
     // Core classes
     m.add_class::<Cello>()?;
     m.add_class::<request::Request>()?;
